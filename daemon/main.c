@@ -55,7 +55,7 @@ static void tty_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf)
 	/* Set output streams */
 	FILE *out = stdout, *outerr = stderr;
 	uv_os_fd_t stream_fd = 0;
-	uv_fileno((uv_handle_t *)stream, &stream_fd);
+	(void) uv_fileno((uv_handle_t *)stream, &stream_fd);
 	if (stream_fd != STDIN_FILENO) {
 		if (nread <= 0) { /* Close if disconnected */
 			uv_close((uv_handle_t *)stream, (uv_close_cb) free);
@@ -100,7 +100,9 @@ static void tty_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf)
 		lua_settop(L, 0);
 	}
 	fflush(out);
-	free(buf->base);
+	if (buf) {
+		free(buf->base);
+	}
 	/* Close if redirected */
 	if (stream_fd != STDIN_FILENO) {
 		fclose(out); /* outerr is the same */
