@@ -525,6 +525,7 @@ static int init_state(struct engine *engine)
 
 static void update_state(uv_timer_t *handle)
 {
+#if 0 // FIXME
 	struct engine *engine = handle->data;
 
 	/* Walk RTT table, clearing all entries with bad score
@@ -537,6 +538,7 @@ static void update_state(uv_timer_t *handle)
 			lru_evict(table, i);
 		}
 	}
+#endif
 }
 
 int engine_init(struct engine *engine, knot_mm_t *pool)
