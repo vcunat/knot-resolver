@@ -461,18 +461,9 @@ static int init_resolver(struct engine *engine)
 	kr_zonecut_init(&engine->resolver.root_hints, (const uint8_t *)"", engine->pool);
 	kr_zonecut_set_sbelt(&engine->resolver, &engine->resolver.root_hints);
 	/* Open NS rtt + reputation cache */
-	engine->resolver.cache_rtt = mm_alloc(engine->pool, lru_size(kr_nsrep_lru_t, LRU_RTT_SIZE));
-	if (engine->resolver.cache_rtt) {
-		lru_init(engine->resolver.cache_rtt, LRU_RTT_SIZE);
-	}
-	engine->resolver.cache_rep = mm_alloc(engine->pool, lru_size(kr_nsrep_lru_t, LRU_REP_SIZE));
-	if (engine->resolver.cache_rep) {
-		lru_init(engine->resolver.cache_rep, LRU_REP_SIZE);
-	}
-	engine->resolver.cache_cookie = mm_alloc(engine->pool, lru_size(kr_cookie_lru_t, LRU_COOKIES_SIZE));
-	if (engine->resolver.cache_cookie) {
-		lru_init(engine->resolver.cache_cookie, LRU_COOKIES_SIZE);
-	}
+	lru_create(&engine->resolver.cache_rtt, LRU_RTT_SIZE, engine->pool);
+	lru_create(&engine->resolver.cache_rep, LRU_REP_SIZE, engine->pool);
+	lru_create(&engine->resolver.cache_cookie, LRU_COOKIES_SIZE, engine->pool);
 
 	/* Load basic modules */
 	engine_register(engine, "iterate", NULL, NULL);
@@ -591,9 +582,7 @@ void engine_deinit(struct engine *engine)
 	network_deinit(&engine->net);
 	kr_zonecut_deinit(&engine->resolver.root_hints);
 	kr_cache_close(&engine->resolver.cache);
-	lru_deinit(engine->resolver.cache_rtt);
-	lru_deinit(engine->resolver.cache_rep);
-	lru_deinit(engine->resolver.cache_cookie);
+	/* Fully in mempool: engine->resolver.cache_{rtt,rep,cookie} */
 
 	/* Clear IPC pipes */
 	for (size_t i = 0; i < engine->ipc_set.len; ++i) {
