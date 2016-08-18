@@ -61,6 +61,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "contrib/ucw/lib.h"
 #include "lib/utils.h"
 #include "libknot/mm_ctx.h"
 
@@ -128,7 +129,7 @@
  * @param baton extra pointer passed to each function invocation
  */
 #define lru_apply(table, function, baton) do { \
-	lru_apply_fun_g(fun_dummy, __typeof__(*(table)->pdata_t)); \
+	lru_apply_fun_g(fun_dummy, __typeof__(*(table)->pdata_t)) = 0; \
 	(void)(fun_dummy == (function)); /* produce a warning with incompatible function type */ \
 	lru_apply_impl(&(table)->lru, (lru_apply_fun)(function), (baton)); \
 	} while (false)
@@ -139,8 +140,6 @@
 #define lru_apply_fun_g(name, val_type) \
 	int (*(name))(const char *key, uint len, val_type *val, void *baton)
 typedef lru_apply_fun_g(lru_apply_fun, void);
-
-typedef unsigned int uint;
 
 #if __GNUC__ >= 4
 	#define CACHE_ALIGNED __attribute__((aligned(64)))

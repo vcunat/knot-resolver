@@ -17,7 +17,6 @@
 #include <assert.h>
 
 #include "lib/generic/lru.h"
-#include "contrib/ucw/lib.h"
 #include "contrib/murmurhash3/murmurhash3.h"
 
 struct lru_item {
