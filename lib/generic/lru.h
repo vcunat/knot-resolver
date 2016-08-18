@@ -22,41 +22,34 @@
  *     hashing is used to split keys into small groups pseudo-randomly,
  *     and almost-perfect LRU is done within each group.
  *
- * # Example usage: FIXME
+ * # Example usage:
  *
  * @code{.c}
  * 	// Define new LRU type
  * 	typedef lru_t(int) lru_int_t;
  *
- * 	// Create LRU on stack
- * 	size_t lru_size = lru_size(lru_int_t, 10);
- * 	lru_int_t lru[lru_size];
- * 	lru_init(&lru, 5);
+ * 	// Create LRU
+ * 	lru_int_t *lru;
+ * 	lru_create(&lru, 5, NULL);
  *
  * 	// Insert some values
- * 	*lru_set(&lru, "luke", strlen("luke")) = 42;
- * 	*lru_set(&lru, "leia", strlen("leia")) = 24;
+ * 	*lru_get_new(lru, "luke", strlen("luke")) = 42;
+ * 	*lru_get_new(lru, "leia", strlen("leia")) = 24;
  *
  * 	// Retrieve values
- * 	int *ret = lru_get(&lru, "luke", strlen("luke");
- * 	if (ret) printf("luke dropped out!\n");
- * 	else     printf("luke's number is %d\n", *ret);
+ * 	int *ret = lru_get_try(lru, "luke", strlen("luke"));
+ * 	if (!ret) printf("luke dropped out!\n");
+ * 	    else  printf("luke's number is %d\n", *ret);
  *
- * 	// Set up eviction function, this is going to get called
- * 	// on entry eviction (baton refers to baton in 'lru' structure)
- * 	void on_evict(void *baton, void *data_) {
- * 		int *data = (int *) data;
- * 		printf("number %d dropped out!\n", *data);
- * 	}
  * 	char *enemies[] = {"goro", "raiden", "subzero", "scorpion"};
  * 	for (int i = 0; i < 4; ++i) {
- * 		int *val = lru_set(&lru, enemies[i], strlen(enemies[i]));
+ * 		int *val = lru_get_new(lru, enemies[i], strlen(enemies[i]));
  * 		if (val)
  * 			*val = i;
  * 	}
  *
  * 	// We're done
- * 	lru_deinit(&lru);
+ * 	lru_free(lru);
  * @endcode
  *
  * \addtogroup generics
@@ -149,11 +142,14 @@ typedef lru_apply_fun_g(lru_apply_fun, void);
 
 typedef unsigned int uint;
 
-// FIXME: detect availability
-#define CACHE_ALIGNED __attribute__((aligned(64)))
+#if __GNUC__ >= 4
+	#define CACHE_ALIGNED __attribute__((aligned(64)))
+#else
+	#define CACHE_ALIGNED
+#endif
 
 struct lru {
-	struct knot_mm mm; /**< Memory context to use for keys and lru itself. */
+	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
 	uint log_groups, /**< Logarithm of the number of LRU groups. */
 		assoc; /**< The maximal number of items per group. */
 	char group_data[] CACHE_ALIGNED;
@@ -212,7 +208,7 @@ static inline void lru_free_impl(struct lru *lru)
 	if (!lru)
 		return;
 	lru_free_items_impl(lru);
-	mm_free(&lru->mm, lru);
+	mm_free(lru->mm, lru);
 }
 
 /** @internal See lru_reset. */

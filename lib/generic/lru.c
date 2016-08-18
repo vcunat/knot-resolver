@@ -30,15 +30,6 @@ static uint item_size(uint key_len, uint val_len)
 	return val_offset(key_len) + val_len;
 }
 
-// TODO: put into a better place?
-void * mm_malloc(void *ctx, size_t n)
-{
-	(void)ctx;
-	return malloc(n);
-}
-//mm_ctx_init unavailable; hand-writing instead
-const knot_mm_t MM_DEFAULT = (knot_mm_t){ NULL, mm_malloc, free };
-
 /** @internal Free each item. */
 KR_EXPORT void lru_free_items_impl(struct lru *lru)
 {
@@ -46,7 +37,7 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru)
 	for (int i = 0; i < (1 << lru->log_groups); ++i) {
 		lru_group_t *g = get_group(lru, i);
 		for (int j = 0; j < lru->assoc; ++j)
-			mm_free(&lru->mm, g->items[j].item);
+			mm_free(lru->mm, g->items[j].item);
 	}
 }
 
@@ -76,7 +67,7 @@ KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 			int ret = f(it->data, it->key_len, item_val(it), baton);
 			assert(-1 <= ret && ret <= 1);
 			if (ret < 0) { // evict
-				mm_free(&lru->mm, it);
+				mm_free(lru->mm, it);
 				g->items[j].item = NULL;
 			}
 			if (ret > 0)
@@ -89,9 +80,6 @@ KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 KR_EXPORT struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm)
 {
 	assert(max_slots);
-	if (!mm)
-		mm = /*const-cast*/(knot_mm_t *)&MM_DEFAULT;
-
 	// let lru->log_groups = ceil(log2(max_slots / (float) assoc))
 	//   without trying for efficiency
 	uint group_count = (max_slots - 1) / assoc + 1;
@@ -106,7 +94,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm
 	if (unlikely(lru == NULL))
 		return NULL;
 	*lru = (struct lru){
-		.mm = *mm,
+		.mm = mm,
 		.log_groups = log_groups,
 		.assoc = assoc
 	};
@@ -155,8 +143,8 @@ insert: // insert into position i (incl. key)
 	uint new_size = item_size(key_len, val_len);
 	if (it == NULL || new_size != item_size(it->key_len, it->val_len)) {
 		// (re)allocate
-		mm_free(&lru->mm, it);
-		it = g->items[i].item = mm_alloc(&lru->mm, new_size);
+		mm_free(lru->mm, it);
+		it = g->items[i].item = mm_alloc(lru->mm, new_size);
 		if (it == NULL)
 			return NULL;
 	}
