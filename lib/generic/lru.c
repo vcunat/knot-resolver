@@ -11,23 +11,36 @@ struct lru_item {
 };
 
 /** @internal Compute offset of value in struct lru_item. */
-static uint val_offset(uint key_len) {
-	uint key_end = sizeof(struct lru_item) + key_len;
+static uint val_offset(uint key_len)
+{
+	uint key_end = offsetof(struct lru_item, data) + key_len;
 	// align it to the closest multiple of four
-	return ((key_end - 1) & 0x3) + 4;
+	return round_power(key_end, 2);
+}
+
+/** @internal Return pointer to value in an item. */
+static void * item_val(struct lru_item *it)
+{
+	return it->data + val_offset(it->key_len) - offsetof(struct lru_item, data);
+}
+
+/** @internal Compute the size of an item. ATM we don't align/pad the end of it. */
+static uint item_size(uint key_len, uint val_len)
+{
+	return val_offset(key_len) + val_len;
 }
 
 // TODO: put into a better place?
 void * mm_malloc(void *ctx, size_t n)
 {
-	(void) ctx;
+	(void)ctx;
 	return malloc(n);
 }
 //mm_ctx_init unavailable; hand-writing instead
-const knot_mm_t MM_DEFAULT = (knot_mm_t) { NULL, mm_malloc, free };
+const knot_mm_t MM_DEFAULT = (knot_mm_t){ NULL, mm_malloc, free };
 
 /** @internal Free each item. */
-void lru_free_items_impl(struct lru *lru)
+KR_EXPORT void lru_free_items_impl(struct lru *lru)
 {
 	assert(lru);
 	for (int i = 0; i < (1 << lru->log_groups); ++i) {
@@ -38,11 +51,11 @@ void lru_free_items_impl(struct lru *lru)
 }
 
 /** @internal See lru_create. */
-struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm)
+KR_EXPORT struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm)
 {
 	assert(max_slots);
 	if (!mm)
-		mm = /*const-cast*/(knot_mm_t *) &MM_DEFAULT;
+		mm = /*const-cast*/(knot_mm_t *)&MM_DEFAULT;
 
 	// let lru->log_groups = ceil(log2(max_slots / (float) assoc))
 	//   without trying for efficiency
@@ -51,12 +64,13 @@ struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm)
 	for (uint s = group_count - 1; s; s /= 2)
 		++log_groups;
 	group_count = 1 << log_groups;
+	assert(max_slots <= group_count * assoc && group_count * assoc < 2 * max_slots);
 
-	size_t size = sizeof(struct lru) + group_count * sizeof_group(assoc);
+	size_t size = offsetof(struct lru, group_data) + group_count * sizeof_group(assoc);
 	struct lru *lru = mm_alloc(mm, size);
 	if (unlikely(lru == NULL))
 		return NULL;
-	*lru = (struct lru) {
+	*lru = (struct lru){
 		.mm = *mm,
 		.log_groups = log_groups,
 		.assoc = assoc
@@ -67,9 +81,10 @@ struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm)
 }
 
 /** @internal Implementation of both getting and insertion. */
-void * lru_get_impl(struct lru *lru, char *key, uint key_len, uint val_len, bool do_insert)
+KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
+				uint val_len, bool do_insert)
 {
-	assert(lru && key && key_len >=0 && key_len < 256);
+	assert(lru && key && key_len < 256);
 	// find the right group
 	uint32_t khash = hash(key, key_len);
 	uint32_t id = khash & ((1 << lru->log_groups) - 1);
@@ -97,20 +112,24 @@ void * lru_get_impl(struct lru *lru, char *key, uint key_len, uint val_len, bool
 		}
 	}
 	i = best_i;
-insert: // insert into position i
+insert: // insert into position i (incl. key)
+	assert(i >= 0 && i < lru->assoc);
 	g->items[i].hash = khash;
+	g->items[i].stamp = 0; // trigger stamp update
 	it = g->items[i].item;
-	uint new_size = val_offset(key_len) + val_len;
-	if (it == NULL || new_size != val_offset(it->key_len) + it->val_len) {
+	uint new_size = item_size(key_len, val_len);
+	if (it == NULL || new_size != item_size(it->key_len, it->val_len)) {
 		// (re)allocate
 		mm_free(&lru->mm, it);
 		it = g->items[i].item = mm_alloc(&lru->mm, new_size);
+		if (it == NULL)
+			return NULL;
 	}
 	it->key_len = key_len;
 	it->val_len = val_len;
 	memcpy(it->data, key, key_len);
 found: // key and hash OK on g->items[i]; now update stamps
-	if (g->items[i].stamp < g->stamp) {
+	if (g->items[i].stamp < g->stamp || g->stamp == 0) {
 		g->items[i].stamp = ++g->stamp;
 		// halve all stamps if they've got too big
 		if (unlikely(g->stamp & (1<<31))) {
@@ -119,6 +138,6 @@ found: // key and hash OK on g->items[i]; now update stamps
 				g->items[i].stamp /= 2;
 		}
 	}
-	return it->data + val_offset(key_len);
+	return item_val(g->items[i].item);
 }
 
