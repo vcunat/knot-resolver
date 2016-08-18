@@ -325,6 +325,23 @@ static char* stats_list(void *env, struct kr_module *module, const char *args)
 	return ret;
 }
 
+/** @internal Helper for dump_list: add a single namehash_t item to JSON. */
+static int dump_value(const char *key, uint len, unsigned *val, void *baton)
+{
+	uint16_t key_type = 0;
+	char key_name[KNOT_DNAME_MAXLEN], type_str[16];
+	/* Extract query name, type and counter */
+	memcpy(&key_type, key, sizeof(key_type));
+	knot_dname_to_str(key_name, (uint8_t *)key + sizeof(key_type), sizeof(key_name));
+	knot_rrtype_to_string(key_type, type_str, sizeof(type_str));
+	/* Convert to JSON object */
+	JsonNode *json_val = json_mkobject();
+	json_append_member(json_val, "count", json_mknumber(*val));
+	json_append_member(json_val, "name",  json_mkstring(key_name));
+	json_append_member(json_val, "type",  json_mkstring(type_str));
+	json_append_element((JsonNode *)baton, json_val);
+	return 0; // keep the item
+}
 /**
  * List frequent names.
  *
@@ -335,27 +352,8 @@ static char* dump_list(void *env, struct kr_module *module, const char *args, na
 	if (!table) {
 		return NULL;
 	}
-	uint16_t key_type = 0;
-	char key_name[KNOT_DNAME_MAXLEN], type_str[16];
 	JsonNode *root = json_mkarray();
-#if 0 // FIXME
-	for (unsigned i = 0; i < table->size; ++i) {
-		struct lru_slot *slot = lru_slot_at((struct lru_hash_base *)table, i);
-		if (slot->key) {
-			/* Extract query name, type and counter */
-			memcpy(&key_type, slot->key, sizeof(key_type));
-			knot_dname_to_str(key_name, (uint8_t *)slot->key + sizeof(key_type), sizeof(key_name));
-			knot_rrtype_to_string(key_type, type_str, sizeof(type_str));
-			unsigned *slot_val = lru_slot_val(slot, lru_slot_offset(table));
-			/* Convert to JSON object */
-			JsonNode *json_val = json_mkobject();
-			json_append_member(json_val, "count", json_mknumber(*slot_val));
-			json_append_member(json_val, "name",  json_mkstring(key_name));
-			json_append_member(json_val, "type",  json_mkstring(type_str));
-			json_append_element(root, json_val);
-		}
-	}
-#endif
+	lru_apply(table, dump_value, root);
 	char *ret = json_encode(root);
 	json_delete(root);
 	return ret;

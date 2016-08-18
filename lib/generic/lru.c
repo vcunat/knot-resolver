@@ -50,6 +50,41 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru)
 	}
 }
 
+/** @internal Bump a stamp in an LRU group, index `i` within the group. */
+static void move_to_front(struct lru *lru, lru_group_t *g, uint i) {
+	if (g->items[i].stamp < g->stamp || g->stamp == 0) {
+		g->items[i].stamp = ++g->stamp;
+		// halve all stamps within group if they've got too big
+		if (unlikely(g->stamp & (1<<31))) {
+			g->stamp /= 2;
+			for (int i = 0; i < lru->assoc; ++i)
+				g->items[i].stamp /= 2;
+		}
+	}
+}
+
+/** @internal See lru_apply. */
+KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
+{
+	assert(lru);
+	for (int i = 0; i < (1 << lru->log_groups); ++i) {
+		lru_group_t *g = get_group(lru, i);
+		for (int j = 0; j < lru->assoc; ++j) {
+			struct lru_item *it = g->items[j].item;
+			if (!it)
+				continue;
+			int ret = f(it->data, it->key_len, item_val(it), baton);
+			assert(-1 <= ret && ret <= 1);
+			if (ret < 0) { // evict
+				mm_free(&lru->mm, it);
+				g->items[j].item = NULL;
+			}
+			if (ret > 0)
+				move_to_front(lru, g, j);
+		}
+	}
+}
+
 /** @internal See lru_create. */
 KR_EXPORT struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm)
 {
@@ -129,15 +164,7 @@ insert: // insert into position i (incl. key)
 	it->val_len = val_len;
 	memcpy(it->data, key, key_len);
 found: // key and hash OK on g->items[i]; now update stamps
-	if (g->items[i].stamp < g->stamp || g->stamp == 0) {
-		g->items[i].stamp = ++g->stamp;
-		// halve all stamps if they've got too big
-		if (unlikely(g->stamp & (1<<31))) {
-			g->stamp /= 2;
-			for (int i = 0; i < lru->assoc; ++i)
-				g->items[i].stamp /= 2;
-		}
-	}
+	move_to_front(lru, g, i);
 	return item_val(g->items[i].item);
 }
 

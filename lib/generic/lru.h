@@ -126,8 +126,26 @@
 		lru_get_impl(&(table)->lru, (key_), (len_), sizeof(*(table)->pdata_t), true)
 
 
+/**
+ * @brief Apply a function to every item in LRU.
+ *
+ * @param table pointer to LRU
+ * @param function int (*function)(const char *key, uint len, val_type *val, void *baton)
+ *        return value meanings: 0 do nothing, -1 evict the item, 1 move to front.
+ * @param baton extra pointer passed to each function invocation
+ */
+#define lru_apply(table, function, baton) do { \
+	lru_apply_fun_g(fun_dummy, __typeof__(*(table)->pdata_t)); \
+	(void)(fun_dummy == (function)); /* produce a warning with incompatible function type */ \
+	lru_apply_impl(&(table)->lru, (lru_apply_fun)(function), (baton)); \
+	} while (false)
+
 
 /* ======================== Inlined part of implementation ======================== */
+
+#define lru_apply_fun_g(name, val_type) \
+	int (*(name))(const char *key, uint len, val_type *val, void *baton)
+typedef lru_apply_fun_g(lru_apply_fun, void);
 
 typedef unsigned int uint;
 
@@ -186,6 +204,7 @@ void lru_free_items_impl(struct lru *lru);
 struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm);
 void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 			uint val_len, bool do_insert);
+void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton);
 
 /** @internal See lru_free. */
 static inline void lru_free_impl(struct lru *lru)

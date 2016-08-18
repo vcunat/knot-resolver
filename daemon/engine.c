@@ -514,22 +514,16 @@ static int init_state(struct engine *engine)
 	return kr_ok();
 }
 
+static int update_stat_item(const char *key, uint len, unsigned *rtt, void *baton)
+{
+	return *rtt > KR_NS_LONG ? -1 : 0;
+}
+/** @internal Walk RTT table, clearing all entries with bad score
+ *    to compensate for intermittent network issues or temporary bad behaviour. */
 static void update_state(uv_timer_t *handle)
 {
-#if 0 // FIXME
 	struct engine *engine = handle->data;
-
-	/* Walk RTT table, clearing all entries with bad score
-	 * to compensate for intermittent network issues or temporary bad behaviour. */
-	kr_nsrep_lru_t *table = engine->resolver.cache_rtt;
-	for (size_t i = 0; i < table->size; ++i) {
-		if (!table->slots[i].key)
-			continue;
-		if (table->slots[i].data > KR_NS_LONG) {
-			lru_evict(table, i);
-		}
-	}
-#endif
+	lru_apply(engine->resolver.cache_rtt, update_stat_item, NULL);
 }
 
 int engine_init(struct engine *engine, knot_mm_t *pool)
