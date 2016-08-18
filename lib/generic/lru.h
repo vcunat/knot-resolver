@@ -90,16 +90,16 @@
  * @param mm_ctx memory context to use for LRU and its keys, NULL for default
  */
 #define lru_create(ptable, max_slots, mm_ctx) \
-	*((struct lru **)ptable) = \
+	*((struct lru **)(ptable)) = \
 		lru_create_impl((max_slots), LRU_ASSOC_DEFAULT, (mm_ctx))
 
 /** @brief Free an LRU created by lru_create (it can be NULL). */
 #define lru_free(table) \
-	lru_free_impl(&table->lru)
+	lru_free_impl(&(table)->lru)
 
 /** @brief Reset an LRU to the empty state (but preserve any settings). */
 #define lru_reset(table) \
-	lru_reset_impl(&table->lru)
+	lru_reset_impl(&(table)->lru)
 
 /**
  * @brief Find key in the LRU and return pointer to the corresponding value.
@@ -110,8 +110,8 @@
  * @return pointer to data or NULL if not found
  */
 #define lru_get_try(table, key_, len_) \
-	(__typeof__(table->pdata_t)) \
-		lru_get_impl(&table->lru, (key_), (len_), -1, false)
+	(__typeof__((table)->pdata_t)) \
+		lru_get_impl(&(table)->lru, (key_), (len_), -1, false)
 
 /**
  * @brief Return pointer to value, inserting if needed (uninitialized).
@@ -122,8 +122,8 @@
  * @return pointer to data or NULL if out-of-memory
  */
 #define lru_get_new(table, key_, len_) \
-	(__typeof__(table->pdata_t)) \
-		lru_get_impl(&table->lru, (key_), (len_), sizeof(*table->pdata_t), true)
+	(__typeof__((table)->pdata_t)) \
+		lru_get_impl(&(table)->lru, (key_), (len_), sizeof(*(table)->pdata_t), true)
 
 
 
