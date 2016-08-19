@@ -14,8 +14,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <assert.h>
-
 #include "lib/generic/lru.h"
 #include "contrib/murmurhash3/murmurhash3.h"
 

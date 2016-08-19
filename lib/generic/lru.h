@@ -58,6 +58,7 @@
 
 #pragma once
 
+#include <assert.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -70,7 +71,7 @@
 /** @brief The type for LRU, parametrized by value type. */
 #define lru_t(type) \
 	union { \
-		type* pdata_t; \
+		type *pdata_t; /* only the *type* information is used */ \
 		struct lru lru; \
 	}
 
@@ -83,9 +84,11 @@
  * @param max_slots number of slots
  * @param mm_ctx memory context to use for LRU and its keys, NULL for default
  */
-#define lru_create(ptable, max_slots, mm_ctx) \
+#define lru_create(ptable, max_slots, mm_ctx) do { \
+	(void)(((__typeof__((*(ptable))->pdata_t))0) == (void *)0); /* typecheck lru_t */ \
 	*((struct lru **)(ptable)) = \
-		lru_create_impl((max_slots), LRU_ASSOC_DEFAULT, (mm_ctx))
+		lru_create_impl((max_slots), LRU_ASSOC_DEFAULT, (mm_ctx)); \
+	} while (false)
 
 /** @brief Free an LRU created by lru_create (it can be NULL). */
 #define lru_free(table) \
@@ -151,7 +154,7 @@ struct lru {
 	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
 	uint log_groups, /**< Logarithm of the number of LRU groups. */
 		assoc; /**< The maximal number of items per group. */
-	char group_data[] CACHE_ALIGNED;
+	char group_data[] CACHE_ALIGNED; /**< Holds the lru_group_t instances. */
 };
 
 struct lru_item;
@@ -170,6 +173,7 @@ typedef struct lru_group lru_group_t;
  * (64 and 128 bytes on 32 and 64-bit). */
 static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 7 : 5;
 
+/** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
 {
 	uint res = ((size - 1) & ~((1 << power) - 1)) + (1 << power);
@@ -181,8 +185,7 @@ static inline uint round_power(uint size, uint power)
 /** @internal Compute the size of a lru_group_t of given associativity. */
 static inline uint sizeof_group(uint assoc)
 {
-	uint byte_size = offsetof(lru_group_t, items)
-		+ sizeof(((lru_group_t *)0)->items[0]) * assoc;
+	uint byte_size = (size_t)(&((lru_group_t *)0)->items[assoc]);
 	return round_power(byte_size, 6); // CACHE_ALIGNED
 }
 
