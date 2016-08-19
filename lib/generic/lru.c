@@ -165,6 +165,7 @@ insert: // insert into position i (incl. key)
 	it->key_len = key_len;
 	it->val_len = val_len;
 	memcpy(it->data, key, key_len);
+	memset(item_val(g->items[i].item), 0, val_len); // clear the value
 found: // key and hash OK on g->items[i]; now update stamps
 	move_to_front(lru, g, i);
 	return item_val(g->items[i].item);

@@ -108,7 +108,7 @@
 		lru_get_impl(&(table)->lru, (key_), (len_), -1, false)
 
 /**
- * @brief Return pointer to value, inserting if needed (uninitialized).
+ * @brief Return pointer to value, inserting if needed (zeroed).
  *
  * @param table pointer to LRU
  * @param key_ lookup key
