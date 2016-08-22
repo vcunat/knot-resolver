@@ -169,9 +169,8 @@ struct lru_group {
 typedef struct lru_group lru_group_t;
 
 /** @internal Default associativity for LRU.
- * ATM it's chosen so lru_group fits into one or two x86 cache lines
- * (64 and 128 bytes on 32 and 64-bit). */
-static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 7 : 5;
+ * ATM it's chosen so lru_group just fits into a single cache line. */
+static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 3 : 5;
 
 /** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
