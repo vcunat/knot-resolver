@@ -185,6 +185,17 @@ typedef struct {
 	size_t len;
 	size_t cap;
 } rr_array_t;
+typedef struct {
+	struct {
+		uint8_t rank;
+		bool cached;
+		bool yielded;
+		bool to_wire;
+	        const knot_rrset_t *rr;
+	} *at;
+	size_t len;
+	size_t cap;
+} ranked_rr_array_t;
 struct kr_zonecut {
 	knot_dname_t *name;
 	knot_rrset_t *key;
@@ -224,6 +235,8 @@ struct kr_request {
 	} upstream;
 	uint32_t options;
 	int state;
+	ranked_rr_array_t answ_selected;
+	ranked_rr_array_t auth_selected;
 	rr_array_t authority;
 	rr_array_t additional;
 	uint8_t _stub[]; /* Do not touch */

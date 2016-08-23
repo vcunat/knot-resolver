@@ -37,6 +37,26 @@
 
 #define DEBUG_MSG(qry, fmt...) QRDEBUG((qry), "resl",  fmt)
 
+static void set_yield(ranked_rr_array_t *array, uint8_t rank)
+{
+	for (unsigned i = 0; i < array->len; ++i) {
+		ranked_rr_array_entry_t *entry = array->at[i];
+		if (entry->rank == rank) {
+			entry->yielded = true;
+		}
+	}
+}
+
+static void clear_yield(ranked_rr_array_t *array)
+{
+	for (unsigned i = 0; i < array->len; ++i) {
+		ranked_rr_array_entry_t *entry = array->at[i];
+		if (entry->yielded) {
+			entry->yielded = false;
+		}
+	}
+}
+
 /**
  * @internal Defer execution of current query.
  * The current layer state and input will be pushed to a stack and resumed on next iteration.
@@ -53,6 +73,8 @@ static int consume_yield(knot_layer_t *ctx, knot_pkt_t *pkt)
 		pickle->pkt = pkt_copy;
 		pickle->next = qry->deferred;
 		qry->deferred = pickle;
+		set_yield(&req->answ_selected,KR_VLDRANK_INITIAL);
+		set_yield(&req->auth_selected,KR_VLDRANK_INITIAL);
 		return kr_ok();
 	}
 	return kr_error(ENOMEM);
@@ -337,6 +359,23 @@ static void write_extra_records(rr_array_t *arr, knot_pkt_t *answer)
 	}
 }
 
+static void write_extra_ranked_records(ranked_rr_array_t *arr, knot_pkt_t *answer)
+{
+	for (size_t i = 0; i < arr->len; ++i) {
+		ranked_rr_array_entry_t * entry = arr->at[i];
+		if (!entry->to_wire) {
+			continue;
+		}
+		knot_rrset_t *rr = entry->rr;
+		if (!knot_pkt_has_dnssec(answer)) {
+			if (rr->type != knot_pkt_qtype(answer) && knot_rrtype_is_dnssec(rr->type)) {
+				continue;
+			}
+		}
+		knot_pkt_put(answer, 0, rr, 0);
+	}
+}
+
 static int answer_fail(knot_pkt_t *answer)
 {
 	int ret = kr_pkt_clear_payload(answer);
@@ -364,6 +403,15 @@ static int answer_finalize(struct kr_request *request, int state)
 		}
 	}
 
+	if (request->answ_selected.len > 0) {
+		assert(answer->current <= KNOT_ANSWER);
+		/* Write answer records. */
+		if (answer->current < KNOT_ANSWER) {
+			knot_pkt_begin(answer, KNOT_ANSWER);
+		}
+		write_extra_ranked_records(&request->answ_selected, answer);
+	}
+
 	/* Write authority records. */
 	if (answer->current < KNOT_AUTHORITY) {
 		knot_pkt_begin(answer, KNOT_AUTHORITY);
@@ -371,8 +419,8 @@ static int answer_finalize(struct kr_request *request, int state)
 	write_extra_records(&request->authority, answer);
 	/* Write additional records. */
 	knot_pkt_begin(answer, KNOT_ADDITIONAL);
-	write_extra_records(&request->additional, answer);
 	/* Write EDNS information */
+	write_extra_records(&request->additional, answer);
 	int ret = 0;
 	if (answer->opt_rr) {
 		knot_pkt_begin(answer, KNOT_ADDITIONAL);
@@ -432,6 +480,8 @@ int kr_resolve_begin(struct kr_request *request, struct kr_context *ctx, knot_pk
 	request->current_query = NULL;
 	array_init(request->authority);
 	array_init(request->additional);
+	array_init(request->answ_selected);
+	array_init(request->auth_selected);
 
 	/* Expect first query */
 	kr_rplan_init(&request->rplan, request, &request->pool);
@@ -791,6 +841,8 @@ int kr_resolve_produce(struct kr_request *request, struct sockaddr **dst, int *t
 		DEBUG_MSG(qry, "=> resuming yielded answer\n");
 		struct kr_layer_pickle *pickle = qry->deferred;
 		request->state = KNOT_STATE_YIELD;
+		clear_yield(&request->answ_selected);
+		clear_yield(&request->auth_selected);
 		RESUME_LAYERS(layer_id(request, pickle->api), request, qry, consume, pickle->pkt);
 		qry->deferred = pickle->next;
 	} else {

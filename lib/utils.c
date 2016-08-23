@@ -412,6 +412,46 @@ int kr_rrarray_add(rr_array_t *array, const knot_rrset_t *rr, knot_mm_t *pool)
 	return kr_ok();
 }
 
+int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
+			  uint8_t rank, bool to_wire, knot_mm_t *pool)
+{
+	/* Check if exists */
+	for (size_t i = 0; i < array->len; ++i) {
+		ranked_rr_array_entry_t *stashed = array->at[i];
+		if (stashed->rank == rank &&
+		    stashed->cached == false &&
+		    stashed->to_wire == to_wire &&
+		    stashed->rr->rclass == rr->rclass &&
+		    stashed->rr->type == rr->type &&
+		    knot_dname_is_equal(stashed->rr->owner, rr->owner)) {
+			/* Merge */
+			return knot_rdataset_merge(&stashed->rr->rrs, &rr->rrs, pool);
+		}
+	}
+
+	/* No stashed rrset found, add */
+	int ret = array_reserve_mm(*array, array->len + 1, kr_memreserve, pool);
+	if (ret != 0) {
+		return kr_error(ENOMEM);
+	}
+
+	ranked_rr_array_entry_t *entry = mm_alloc(pool, sizeof(ranked_rr_array_entry_t));
+	if (!entry) {
+		return kr_error(ENOMEM);
+	}
+	knot_rrset_t *copy = knot_rrset_copy(rr, pool);
+	if (!copy) {
+		return kr_error(ENOMEM);
+	}
+	entry->rr = copy;
+	entry->rank = rank;
+	entry->cached = false;
+	entry->yielded = false;
+	entry->to_wire = to_wire;
+	array_push(*array, entry);
+	return kr_ok();
+}
+
 static char *callprop(struct kr_module *module, const char *prop, const char *input, void *env)
 {
 	if (!module || !prop) {

@@ -27,6 +27,7 @@
 #include "lib/defines.h"
 #include "lib/nsrep.h"
 #include "lib/module.h"
+#include "lib/utils.h"
 #include "lib/dnssec/ta.h"
 
 #define DEBUG_MSG(fmt...) QRDEBUG(req->current_query, "iter", fmt)
@@ -153,24 +154,10 @@ static int update_parent(const knot_rrset_t *rr, struct kr_query *qry)
 	return update_nsaddr(rr, qry->parent);
 }
 
-static int update_answer(const knot_rrset_t *rr, unsigned hint, knot_pkt_t *answer)
+static int update_answer(const knot_rrset_t *rr, struct kr_request *req, uint8_t rank, bool to_wire)
 {
-	/* Scrub DNSSEC records when not requested. */
-	if (!knot_pkt_has_dnssec(answer)) {
-		if (rr->type != knot_pkt_qtype(answer) && knot_rrtype_is_dnssec(rr->type)) {
-			return KNOT_STATE_DONE; /* Scrub */
-		}
-	}
-	/* Copy record, as it may be accessed after packet processing. */
-	knot_rrset_t *copy = knot_rrset_copy(rr, &answer->mm);
-	/* Write to final answer. */
-	int ret = knot_pkt_put(answer, hint, copy, KNOT_PF_FREE);
-	if (ret != KNOT_EOK) {
-		knot_wire_set_tc(answer->wire);
-		return KNOT_STATE_DONE;
-	}
-
-	return KNOT_STATE_DONE;
+	int ret = kr_ranked_rrarray_add(&req->answ_selected, rr, rank, to_wire, &req->pool);
+	return ret == kr_ok() ? KNOT_STATE_DONE : KNOT_STATE_FAIL;
 }
 
 static void fetch_glue(knot_pkt_t *pkt, const knot_dname_t *ns, struct kr_request *req)
@@ -278,6 +265,41 @@ static int update_cut(knot_pkt_t *pkt, const knot_rrset_t *rr, struct kr_request
 	return state;
 }
 
+static bool contains_owner(ranked_rr_array_t *arr, const knot_dname_t *owner)
+{
+	bool ret = false;
+	for (size_t i = 0; i < arr->len; ++i) {
+		if (knot_dname_in(owner, arr->at[i]->rr->owner)) {
+			ret = true;
+			break;
+		}
+	}
+	return ret;
+}
+
+static int pick_authority(knot_pkt_t *pkt, struct kr_request *req, bool to_wire)
+{
+	struct kr_query *qry = req->current_query;
+	const knot_pktsection_t *ns = knot_pkt_section(pkt, KNOT_AUTHORITY);
+
+	uint8_t rank = !(qry->flags & QUERY_DNSSEC_WANT) || (qry->flags & QUERY_CACHED) ?
+			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
+
+	for (unsigned i = 0; i < ns->count; ++i) {
+		const knot_rrset_t *rr = knot_pkt_rr(ns, i);
+		if (!knot_dname_in(qry->zone_cut.name, rr->owner) &&
+		    !contains_owner(&req->answ_selected, rr->owner)) {
+			continue;
+		}
+		int ret = kr_ranked_rrarray_add(&req->auth_selected, rr, rank, to_wire, &req->pool);
+		if (ret != kr_ok()) {
+			return ret;
+		}
+	}
+
+	return kr_ok();
+}
+
 static int process_authority(knot_pkt_t *pkt, struct kr_request *req)
 {
 	int result = KNOT_STATE_CONSUME;
@@ -332,23 +354,22 @@ static void finalize_answer(knot_pkt_t *pkt, struct kr_query *qry, struct kr_req
 	knot_pkt_t *answer = req->answer;
 	knot_wire_set_rcode(answer->wire, knot_wire_get_rcode(pkt->wire));
 
-	/* Fill in bailiwick records in authority */
+	/* Stash the authority records, they will be written to wire on answer finalization. */
 	const bool scrub_dnssec = !knot_pkt_has_dnssec(answer);
 	const uint16_t qtype = knot_pkt_qtype(answer);
-	struct kr_zonecut *cut = &qry->zone_cut;
 	int pkt_class = kr_response_classify(pkt);
 	if ((pkt_class & (PKT_NXDOMAIN|PKT_NODATA))) {
-		const knot_pktsection_t *ns = knot_pkt_section(pkt, KNOT_AUTHORITY);
-		for (unsigned i = 0; i < ns->count; ++i) {
-			const knot_rrset_t *rr = knot_pkt_rr(ns, i);
-			/* Scrub DNSSEC records when not requested. */
+		for (size_t i = 0; i < req->auth_selected.len; ++i) {
+			ranked_rr_array_entry_t *entry = req->auth_selected.at[i];
+			if (!entry->to_wire) {
+				continue;
+			}
+
+			knot_rrset_t *rr = req->auth_selected.at[i]->rr;
 			if (scrub_dnssec && rr->type != qtype && knot_rrtype_is_dnssec(rr->type)) {
 				continue;
 			}
-			/* Stash the authority records, they will be written to wire on answer finalization. */
-			if (knot_dname_in(cut->name, rr->owner)) {
-				kr_rrarray_add(&req->authority, rr, &answer->mm);
-			}
+			array_push(req->authority, rr);
 		}
 	}
 }
@@ -365,36 +386,17 @@ static bool is_rrsig_type_covered(const knot_rrset_t *rr, uint16_t type)
 	return ret;
 }
 
-static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
+static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, const knot_dname_t **cname_ret)
 {
 	struct kr_query *query = req->current_query;
-	/* Response for minimized QNAME.
-	 * NODATA   => may be empty non-terminal, retry (found zone cut)
-	 * NOERROR  => found zone cut, retry
-	 * NXDOMAIN => parent is zone cut, retry as a workaround for bad authoritatives
-	 */
-	bool is_final = (query->parent == NULL);
-	int pkt_class = kr_response_classify(pkt);
-	if (!knot_dname_is_equal(knot_pkt_qname(pkt), query->sname) &&
-	    (pkt_class & (PKT_NOERROR|PKT_NXDOMAIN|PKT_REFUSED|PKT_NODATA))) {
-		DEBUG_MSG("<= found cut, retrying with non-minimized name\n");
-		query->flags |= QUERY_NO_MINIMIZE;
-		return KNOT_STATE_CONSUME;
-	}
-
-	/* This answer didn't improve resolution chain, therefore must be authoritative (relaxed to negative). */
-	if (!(query->flags & QUERY_STUB) && !is_authoritative(pkt, query)) {
-		if (pkt_class & (PKT_NXDOMAIN|PKT_NODATA)) {
-			DEBUG_MSG("<= lame response: non-auth sent negative response\n");
-			return KNOT_STATE_FAIL;
-		}
-	}
-
 	/* Process answer type */
 	const knot_pktsection_t *an = knot_pkt_section(pkt, KNOT_ANSWER);
 	const knot_dname_t *cname = NULL;
 	const knot_dname_t *pending_cname = query->sname;
 	unsigned cname_chain_len = 0;
+	uint8_t rank = !(query->flags & QUERY_DNSSEC_WANT) || (query->flags & QUERY_CACHED) ?
+			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
+	bool is_final = referral || (query->parent == NULL);
 	bool can_follow = false;
 	bool strict_mode = (query->flags & QUERY_STRICT) && !(query->flags & QUERY_STUB);
 	do {
@@ -414,7 +416,8 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 			if(knot_dname_is_equal(cname, knot_pkt_qname(req->answer))) {
 				hint = KNOT_COMPR_HINT_QNAME;
 			}
-			int state = is_final ? update_answer(rr, hint, req->answer) : update_parent(rr, query);
+			/* if not referral, mark record to be written to final answer */
+			int state = is_final ? update_answer(rr, req, rank, !referral) : update_parent(rr, query);
 			if (state == KNOT_STATE_FAIL) {
 				return state;
 			}
@@ -446,7 +449,52 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 			break;
 		}
 	} while (pending_cname && can_follow);
+	*cname_ret = cname;
+	return kr_ok();
+}
 
+static int process_referral_answer(knot_pkt_t *pkt, struct kr_request *req)
+{
+	const knot_dname_t *cname = NULL;
+	int state = unroll_cname(pkt, req, true, &cname);
+	if (state != kr_ok()) {
+		return KNOT_STATE_FAIL;
+	}
+	state = pick_authority(pkt, req, false);
+	return state == kr_ok() ? KNOT_STATE_DONE : KNOT_STATE_FAIL;
+}
+
+static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
+{
+	struct kr_query *query = req->current_query;
+	/* Response for minimized QNAME.
+	 * NODATA   => may be empty non-terminal, retry (found zone cut)
+	 * NOERROR  => found zone cut, retry
+	 * NXDOMAIN => parent is zone cut, retry as a workaround for bad authoritatives
+	 */
+	bool is_final = (query->parent == NULL);
+	int pkt_class = kr_response_classify(pkt);
+	if (!knot_dname_is_equal(knot_pkt_qname(pkt), query->sname) &&
+	    (pkt_class & (PKT_NOERROR|PKT_NXDOMAIN|PKT_REFUSED|PKT_NODATA))) {
+		DEBUG_MSG("<= found cut, retrying with non-minimized name\n");
+		query->flags |= QUERY_NO_MINIMIZE;
+		return KNOT_STATE_CONSUME;
+	}
+
+	/* This answer didn't improve resolution chain, therefore must be authoritative (relaxed to negative). */
+	if (!(query->flags & QUERY_STUB) && !is_authoritative(pkt, query)) {
+		if (pkt_class & (PKT_NXDOMAIN|PKT_NODATA)) {
+			DEBUG_MSG("<= lame response: non-auth sent negative response\n");
+			return KNOT_STATE_FAIL;
+		}
+	}
+
+	const knot_dname_t *cname = NULL;
+	/* Process answer type */
+	int state = unroll_cname(pkt, req, false, &cname);
+	if (state != kr_ok()) {
+		return state;
+	}
 	/* Make sure that this is an authoritative answer (even with AA=0) for other layers */
 	knot_wire_set_aa(pkt->wire);
 	/* Either way it resolves current query. */
@@ -456,15 +504,18 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 		/* Check if target record has been already copied */
 		query->flags |= QUERY_CNAME;
 		if (is_final) {
-			const knot_pktsection_t *an = knot_pkt_section(req->answer, KNOT_ANSWER);
-			for (unsigned i = 0; i < an->count; ++i) {
-				const knot_rrset_t *rr = knot_pkt_rr(an, i);
+			for (size_t i = 0; i < req->answ_selected.len; ++i) {
+				const knot_rrset_t *rr = req->answ_selected.at[i]->rr;
 				if (!knot_dname_is_equal(rr->owner, cname)) {
 					continue;
 				}
 				if ((rr->rclass != query->sclass) ||
 				    (rr->type != query->stype)) {
 					continue;
+				}
+				state = pick_authority(pkt, req, true);
+				if (state != kr_ok()) {
+					return KNOT_STATE_FAIL;
 				}
 				finalize_answer(pkt, query, req);
 				return KNOT_STATE_DONE;
@@ -491,7 +542,15 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 		    !kr_ta_covers(&req->ctx->negative_anchors, cname)) {
 			next->flags |= QUERY_DNSSEC_WANT;
 		}
+		state = pick_authority(pkt, req, false);
+		if (state != kr_ok()) {
+			return KNOT_STATE_FAIL;
+		}
 	} else if (!query->parent) {
+		state = pick_authority(pkt, req, true);
+		if (state != kr_ok()) {
+			return KNOT_STATE_FAIL;
+		}
 		finalize_answer(pkt, query, req);
 	}
 	return KNOT_STATE_DONE;
@@ -503,8 +562,24 @@ static int resolve_error(knot_pkt_t *pkt, struct kr_request *req)
 	return KNOT_STATE_FAIL;
 }
 
+static void remove_except_yielded(ranked_rr_array_t *arr)
+{
+	ssize_t i = 0;
+	while (i < arr->len) {
+		ranked_rr_array_entry_t *rr = arr->at[i];
+		if (!rr->yielded) {
+			array_del(*arr, i);
+			/* last element was relocated at i-th index
+			 * arr->len was decreased
+                         * do not increase i */
+		} else {
+			++i;
+		}
+	}
+}
+
 /* State-less single resolution iteration step, not needed. */
-static int reset(knot_layer_t *ctx)  { return KNOT_STATE_PRODUCE; }
+static int reset(knot_layer_t *ctx) { return KNOT_STATE_PRODUCE; }
 
 /* Set resolution context and parameters. */
 static int begin(knot_layer_t *ctx, void *module_param)
@@ -657,6 +732,7 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 		state = process_answer(pkt, req);
 		break;
 	case KNOT_STATE_DONE: /* Referral */
+		state = process_referral_answer(pkt,req);
 		DEBUG_MSG("<= referral response, follow\n");
 		break;
 	default:

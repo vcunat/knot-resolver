@@ -239,26 +239,40 @@ static void stash_glue(map_t *stash, knot_pkt_t *pkt, const knot_dname_t *ns_nam
 }
 
 /* @internal DS is special and is present only parent-side */
-static void stash_ds(struct kr_query *qry, knot_pkt_t *pkt, map_t *stash, knot_mm_t *pool)
+static void stash_ds(struct kr_request *req, knot_pkt_t *pkt, map_t *stash, knot_mm_t *pool)
 {
-	const knot_pktsection_t *authority = knot_pkt_section(pkt, KNOT_AUTHORITY);
-	for (unsigned i = 0; i < authority->count; ++i) {
-		const knot_rrset_t *rr = knot_pkt_rr(authority, i);
+	ranked_rr_array_t *arr= &req->auth_selected;
+	if (!arr->len) {
+		return;
+	}
+	/* uncached entries are located at the end */
+	for (ssize_t i = arr->len - 1; i >= 0; --i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		if (entry->cached) {
+			break;
+		}
+		const knot_rrset_t *rr = entry->rr;
 		if (rr->type == KNOT_RRTYPE_DS || rr->type == KNOT_RRTYPE_RRSIG) {
 			kr_rrmap_add(stash, rr, KR_RANK_AUTH, pool);
+			entry->cached = true;
 		}
 	}
 }
 
-static int stash_authority(struct kr_query *qry, knot_pkt_t *pkt, map_t *stash, knot_mm_t *pool)
+static int stash_authority(struct kr_request *req, knot_pkt_t *pkt, map_t *stash, knot_mm_t *pool)
 {
-	const knot_pktsection_t *authority = knot_pkt_section(pkt, KNOT_AUTHORITY);
-	for (unsigned i = 0; i < authority->count; ++i) {
-		const knot_rrset_t *rr = knot_pkt_rr(authority, i);
-		/* Cache in-bailiwick data only */
-		if (!knot_dname_in(qry->zone_cut.name, rr->owner)) {
-			continue;
+	ranked_rr_array_t *arr= &req->auth_selected;
+	if (!arr->len) {
+		return kr_ok();
+	}
+	struct kr_query *qry = req->current_query;
+	/* uncached entries are located at the end */
+	for (ssize_t i = arr->len - 1; i >= 0; --i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		if (entry->cached) {
+			break;
 		}
+		const knot_rrset_t *rr = entry->rr;
 		/* Look up glue records for NS */
 		if (rr->type == KNOT_RRTYPE_NS) {
 			const knot_dname_t *ns_name = knot_ns_name(&rr->rrs, 0);
@@ -266,58 +280,44 @@ static int stash_authority(struct kr_query *qry, knot_pkt_t *pkt, map_t *stash, 
 				stash_glue(stash, pkt, ns_name, pool);
 			}
 		}
-		/* Stash record */
 		kr_rrmap_add(stash, rr, KR_RANK_NONAUTH, pool);
+		entry->cached = true;
 	}
 	return kr_ok();
 }
 
-static int stash_answer(struct kr_query *qry, knot_pkt_t *pkt, map_t *stash, knot_mm_t *pool)
+static int stash_answer(struct kr_request *req, knot_pkt_t *pkt, map_t *stash, knot_mm_t *pool)
 {
-	/* Work with QNAME, as minimised name data is cacheable. */
-	const knot_dname_t *cname_begin = knot_pkt_qname(pkt);
-	if (!cname_begin) {
-		cname_begin = qry->sname;
+	ranked_rr_array_t *arr= &req->answ_selected;
+	if (!arr->len) {
+		return kr_ok();
 	}
-	/* Stash direct answers (equal to current QNAME/CNAME),
-	 * accept out-of-order RRSIGS. */
-	const knot_pktsection_t *answer = knot_pkt_section(pkt, KNOT_ANSWER);
-	const knot_dname_t *cname = NULL;
-	const knot_dname_t *next_cname = cname_begin;
-	unsigned cname_chain_len = 0;
-	do {
-		cname = next_cname;
-		next_cname = NULL;
-		for (unsigned i = 0; i < answer->count; ++i) {
-			const knot_rrset_t *rr = knot_pkt_rr(answer, i);
-			if (!knot_dname_is_equal(rr->owner, cname)) {
-				continue;
-			}
-			kr_rrmap_add(stash, rr, KR_RANK_AUTH, pool);
-			/* Follow CNAME chain in current cut (if SECURE). */
-			if ((qry->flags & QUERY_DNSSEC_WANT) && rr->type == KNOT_RRTYPE_CNAME) {
-				cname_chain_len += 1;
-				next_cname = knot_cname_name(&rr->rrs);
-				if (next_cname && !knot_dname_in(qry->zone_cut.name, next_cname)) {
-					next_cname = NULL;
-				}
-				/* Check if the same CNAME was already resolved */
-				if (next_cname) {
-					char key[KR_RRKEY_LEN];
-					int ret = kr_rrkey(key, next_cname, rr->type, KR_RANK_AUTH);
-					if (ret != 0 || map_get(stash, key)) {
-						DEBUG_MSG(qry, "<= cname chain loop\n");
-						next_cname = NULL;
-					}
-				}
-				if (cname_chain_len > answer->count || cname_chain_len > KR_CNAME_CHAIN_LIMIT) {
-					DEBUG_MSG(qry, "<= too long cname chain\n");
-					next_cname = NULL;
-				}
-			}
+	/* uncached entries are located at the end */
+	for (ssize_t i = arr->len - 1; i >= 0; --i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		if (entry->cached) {
+			break;
 		}
-	} while (next_cname);
+		const knot_rrset_t *rr = entry->rr;
+		kr_rrmap_add(stash, rr, KR_RANK_AUTH, pool);
+		entry->cached = true;
+	}
 	return kr_ok();
+
+}
+
+static void mark_cached(ranked_rr_array_t *arr)
+{
+	if (!arr->len) {
+		return;
+	}
+	for (ssize_t i = arr->len - 1; i >= 0; --i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		if (entry->cached) {
+			break;
+		}
+		entry->cached = true;
+	}
 }
 
 static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
@@ -325,10 +325,14 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
 	if (!qry || ctx->state & KNOT_STATE_FAIL) {
+		mark_cached(&req->answ_selected);
+		mark_cached(&req->auth_selected);
 		return ctx->state;
 	}
 	/* Do not cache truncated answers. */
 	if (knot_wire_get_tc(pkt->wire)) {
+		mark_cached(&req->answ_selected);
+		mark_cached(&req->auth_selected);
 		return ctx->state;
 	}
 
@@ -336,6 +340,8 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = !(knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
 	if (qry->flags & QUERY_CACHED || knot_wire_get_rcode(pkt->wire) != KNOT_RCODE_NOERROR || !is_eligible) {
+		mark_cached(&req->answ_selected);
+		mark_cached(&req->auth_selected);
 		return ctx->state;
 	}
 	/* Stash in-bailiwick data from the AUTHORITY and ANSWER. */
@@ -346,9 +352,9 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	int ret = 0;
 	bool is_auth = knot_wire_get_aa(pkt->wire);
 	if (is_auth) {
-		ret = stash_answer(qry, pkt, &stash, &req->pool);
+		ret = stash_answer(req, pkt, &stash, &req->pool);
 		if (ret == 0) {
-			ret = stash_authority(qry, pkt, &stash, &req->pool);
+			ret = stash_authority(req, pkt, &stash, &req->pool);
 		}
 	/* Cache authority only if chasing referral/cname chain */
 	} else if (knot_pkt_section(pkt, KNOT_ANSWER)->count == 0 ||
@@ -357,7 +363,7 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	/* Cache DS records in referrals */
 	if (!is_auth && knot_pkt_has_dnssec(pkt)) {
-		stash_ds(qry, pkt, &stash, &req->pool);
+		stash_ds(req, pkt, &stash, &req->pool);
 	}
 	/* Cache stashed records */
 	if (ret == 0 && stash.root != NULL) {
@@ -373,6 +379,8 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 		}
 		kr_cache_sync(cache);
 	}
+	mark_cached(&req->answ_selected);
+	mark_cached(&req->auth_selected);
 	return ctx->state;
 }
 
