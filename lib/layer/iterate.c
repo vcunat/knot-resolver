@@ -154,12 +154,6 @@ static int update_parent(const knot_rrset_t *rr, struct kr_query *qry)
 	return update_nsaddr(rr, qry->parent);
 }
 
-static int update_answer(const knot_rrset_t *rr, struct kr_request *req, uint8_t rank, bool to_wire)
-{
-	int ret = kr_ranked_rrarray_add(&req->answ_selected, rr, rank, to_wire, &req->pool);
-	return ret == kr_ok() ? KNOT_STATE_DONE : KNOT_STATE_FAIL;
-}
-
 static void fetch_glue(knot_pkt_t *pkt, const knot_dname_t *ns, struct kr_request *req)
 {
 	bool used_glue = false;
@@ -396,7 +390,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 	unsigned cname_chain_len = 0;
 	uint8_t rank = !(query->flags & QUERY_DNSSEC_WANT) || (query->flags & QUERY_CACHED) ?
 			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
-	bool is_final = referral || (query->parent == NULL);
+	bool is_final = (query->parent == NULL);
 	bool can_follow = false;
 	bool strict_mode = (query->flags & QUERY_STRICT) && !(query->flags & QUERY_STUB);
 	do {
@@ -416,10 +410,20 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 			if(knot_dname_is_equal(cname, knot_pkt_qname(req->answer))) {
 				hint = KNOT_COMPR_HINT_QNAME;
 			}
-			/* if not referral, mark record to be written to final answer */
-			int state = is_final ? update_answer(rr, req, rank, !referral) : update_parent(rr, query);
-			if (state == KNOT_STATE_FAIL) {
-				return state;
+			int state = KNOT_STATE_FAIL;
+			bool to_wire = false;
+			if (is_final) {
+				/* if not referral, mark record to be written to final answer */
+				to_wire = !referral;
+			} else {
+				state = update_parent(rr, query);
+				if (state == KNOT_STATE_FAIL) {
+					return state;
+				}
+			}
+			state = kr_ranked_rrarray_add(&req->answ_selected, rr, rank, to_wire, &req->pool);
+			if (state != kr_ok()) {
+				return KNOT_STATE_FAIL;
 			}
 			/* can_follow is false, therefore QUERY_DNSSEC_WANT flag is set.
 			 * Follow cname chain only if rrsig exists. */

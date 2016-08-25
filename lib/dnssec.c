@@ -176,10 +176,9 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 		--covered_labels;
 	}
 
-	const knot_pktsection_t *sec = knot_pkt_section(pkt, section_id);
-	for (unsigned i = 0; i < sec->count; ++i) {
+	for (uint16_t i = 0; i < vctx->rrs->len; ++i) {
 		/* Consider every RRSIG that matches owner and covers the class/type. */
-		const knot_rrset_t *rrsig = knot_pkt_rr(sec, i);
+		const knot_rrset_t *rrsig = vctx->rrs->at[i]->rr;
 		if (rrsig->type != KNOT_RRTYPE_RRSIG) {
 			continue;
 		}
