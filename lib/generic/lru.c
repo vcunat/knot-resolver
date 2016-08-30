@@ -119,7 +119,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm
 KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				uint val_len, bool do_insert)
 {
-	assert(lru && key && key_len < 256);
+	assert(lru && (key || !key_len) && key_len < 256);
 	// find the right group
 	uint32_t khash = hash(key, key_len);
 	uint32_t id = khash & ((1 << lru->log_groups) - 1);
