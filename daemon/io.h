@@ -23,7 +23,7 @@
 struct qr_task;
 struct tls_ctx_t;
 
-/* Per-session (TCP or UDP) persistent structure,
+/** Per-session (TCP or UDP) persistent structure
  * that exists between remote counterpart and a local socket.
  */
 struct session {

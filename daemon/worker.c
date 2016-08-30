@@ -76,6 +76,7 @@ static inline struct worker_ctx *get_worker(void)
 	return uv_default_loop()->data;
 }
 
+/** @internal "Allocate" a struct req. */
 static inline struct req *req_borrow(struct worker_ctx *worker)
 {
 	struct req *req = NULL;
@@ -89,6 +90,7 @@ static inline struct req *req_borrow(struct worker_ctx *worker)
 	return req;
 }
 
+/** @internal "Free" a struct req. */
 static inline void req_release(struct worker_ctx *worker, struct req *req)
 {
 	if (!req || worker->pool_ioreq.len < 4 * MP_FREELIST_SIZE) {
@@ -211,6 +213,7 @@ static int subreq_key(char *dst, knot_pkt_t *pkt)
 	return kr_rrkey(dst, knot_pkt_qname(pkt), knot_pkt_qtype(pkt), knot_pkt_qclass(pkt));
 }
 
+/** @internal Create a new empty task. */
 static struct qr_task *qr_task_create(struct worker_ctx *worker, uv_handle_t *handle, const struct sockaddr *addr)
 {
 	/* How much can client handle? */
@@ -327,6 +330,7 @@ static void qr_task_free(struct qr_task *task)
 	}
 }
 
+/** @internal Start resolving a query. */
 static int qr_task_start(struct qr_task *task, knot_pkt_t *query)
 {
 	assert(task && query);
@@ -365,7 +369,7 @@ static int qr_task_start(struct qr_task *task, knot_pkt_t *query)
 	return 0;
 }
 
-/*@ Register qr_task within session. */
+/** @internal Register a qr_task within a TCP session. */
 static int qr_task_register(struct qr_task *task, struct session *session)
 {
 	int ret = array_reserve(session->tasks, session->tasks.len + 1);
@@ -628,6 +632,7 @@ static int timer_start(struct qr_task *task, uv_timer_cb cb, uint64_t timeout, u
 	return 0;
 }
 
+/** @internal Kill any pending sub-requests. */
 static void subreq_finalize(struct qr_task *task, const struct sockaddr *packet_source, knot_pkt_t *pkt)
 {
 	/* Close pending timer */
@@ -733,7 +738,8 @@ static int qr_task_step(struct qr_task *task, const struct sockaddr *packet_sour
 	} else if (!task->addrlist || sock_type < 0) {
 		return qr_task_step(task, NULL, NULL);
 	}
-
+	/* A query was produced; we need to send it. */
+	assert(state == KNOT_STATE_CONSUME);
 	/* Count available address choices */
 	struct sockaddr_in6 *choice = (struct sockaddr_in6 *)task->addrlist;
 	for (size_t i = 0; i < KR_NSREP_MAXADDR && choice->sin6_family != AF_UNSPEC; ++i) {
@@ -832,7 +838,7 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle, knot_pkt_t *ms
 	/* Start new task on listening sockets, or resume if this is subrequest */
 	struct qr_task *task = NULL;
 	if (!session->outgoing) {
-		/* Ignore badly formed queries or responses. */
+		/* Ignore badly formed queries and any responses. */
 		if (!msg || ret != 0 || knot_wire_get_qr(msg->wire)) {
 			if (msg) worker->stats.dropped += 1;
 			return kr_error(EINVAL); /* Ignore. */
@@ -860,15 +866,6 @@ static int msg_size(const uint8_t *msg)
 		return wire_read_u16(msg);
 }
 
-/* If buffering, close last task as it isn't live yet. */
-static void discard_buffered(struct session *session)
-{
-	if (session->buffering) {
-		qr_task_free(session->buffering);
-		session->buffering = NULL;
-	}
-}
-
 int worker_end_tcp(struct worker_ctx *worker, uv_handle_t *handle)
 {
 	if (!worker || !handle) {
@@ -879,9 +876,13 @@ int worker_end_tcp(struct worker_ctx *worker, uv_handle_t *handle)
 	 * borrowed the task from parent session. */
 	struct session *session = handle->data;
 	if (session->outgoing) {
-		worker_submit(worker, (uv_handle_t *)handle, NULL, NULL);	
+		worker_submit(worker, (uv_handle_t *)handle, NULL, NULL);
 	} else {
-		discard_buffered(session);
+		/* If buffering, close the last task as it isn't live yet. */
+		if (session->buffering) {
+			qr_task_free(session->buffering);
+			session->buffering = NULL;
+		}
 	}
 	return 0;
 }
