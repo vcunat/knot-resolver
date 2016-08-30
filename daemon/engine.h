@@ -56,7 +56,7 @@ struct engine {
     struct network net;
     module_array_t modules;
     array_t(const struct kr_cdb_api *) backends;
-    fd_array_t ipc_set;
+    fd_array_t ipc_set; //!< Pipe FDs for communication with other forks.
     knot_mm_t *pool;
     uv_timer_t *updater;
     char *hostname;

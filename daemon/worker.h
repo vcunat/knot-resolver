@@ -39,7 +39,8 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle, knot_pkt_t *qu
 
 /**
  * Process incoming DNS/TCP message fragment(s).
- * If the fragment contains only a partial message, it is buffered.
+ *
+ * If the fragment contains only a partial message, buffer it.
  * If the fragment contains a complete query or completes current fragment, execute it.
  * @return 0 or an error code
  */
@@ -75,9 +76,9 @@ typedef array_t(void *) mp_freelist_t;
 struct worker_ctx {
 	struct engine *engine;
 	uv_loop_t *loop;
-	int id;
-	int count;
-	unsigned tcp_pipeline_max;
+	int id; /**< The forks have consecutive natural IDs; 0 for the parent. */
+	int count; /**< The number of processes. */
+	unsigned tcp_pipeline_max; /**< How many tasks per TCP session before throttling. */
 #if __linux__
 	uint8_t wire_buf[RECVMMSG_BATCH * KNOT_WIRE_MAX_PKTSIZE];
 #else
@@ -93,6 +94,8 @@ struct worker_ctx {
 		size_t dropped;
 		size_t timeout;
 	} stats;
+
+	/** Map: subreq_key() -> qr_task *; for queuing identical DNS queries (per-process). */
 	map_t outgoing;
 	mp_freelist_t pool_mp;
 	mp_freelist_t pool_ioreq;

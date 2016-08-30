@@ -66,8 +66,8 @@ const knot_lookup_t *kr_query_flag_names(void);
  * Single query representation.
  */
 struct kr_query {
-	struct kr_query *parent;
-	knot_dname_t *sname;
+	struct kr_query *parent; /**< Parent query.  These are spawned when validator needs extra info. */
+	knot_dname_t *sname; /**< The domain name we are searching for. */
 	uint16_t stype;
 	uint16_t sclass;
 	uint16_t id;
