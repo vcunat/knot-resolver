@@ -96,7 +96,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 		.log_groups = log_groups,
 	};
 	// zeros are a good init
-	memset(lru->groups, 0, offsetof(struct lru, groups[group_count]));
+	memset(lru->groups, 0, size - offsetof(struct lru, groups));
 	return lru;
 }
 

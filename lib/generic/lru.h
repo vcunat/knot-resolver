@@ -207,6 +207,6 @@ static inline void lru_free_impl(struct lru *lru)
 static inline void lru_reset_impl(struct lru *lru)
 {
 	lru_free_items_impl(lru);
-	memset(lru->groups, 0, offsetof(struct lru, groups[1 << lru->log_groups]));
+	memset(lru->groups, 0, sizeof(lru->groups[0]) * (1 << lru->log_groups));
 }
 
