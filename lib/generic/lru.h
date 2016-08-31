@@ -87,7 +87,7 @@
 #define lru_create(ptable, max_slots, mm_ctx) do { \
 	(void)(((__typeof__((*(ptable))->pdata_t))0) == (void *)0); /* typecheck lru_t */ \
 	*((struct lru **)(ptable)) = \
-		lru_create_impl((max_slots), LRU_ASSOC_DEFAULT, (mm_ctx)); \
+		lru_create_impl((max_slots), (mm_ctx)); \
 	} while (false)
 
 /** @brief Free an LRU created by lru_create (it can be NULL). */
@@ -152,25 +152,24 @@ typedef lru_apply_fun_g(lru_apply_fun, void);
 
 struct lru {
 	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
-	uint log_groups, /**< Logarithm of the number of LRU groups. */
-		assoc; /**< The maximal number of items per group. */
+	uint log_groups; /**< Logarithm of the number of LRU groups. */
+		//assoc; /**< The maximal number of items per group. */
 	char group_data[] CACHE_ALIGNED; /**< Holds the lru_group_t instances. */
 };
 
 struct lru_item;
 
 struct lru_group {
-	uint32_t stamp;
-	struct {
-		uint32_t stamp, hash;
-		struct lru_item *item;
-	} items[];
+	uint16_t counts[6];
+	uint16_t hashes[6];
+	struct lru_item *items[];
 } CACHE_ALIGNED;
 typedef struct lru_group lru_group_t;
 
 /** @internal Default associativity for LRU.
  * ATM it's chosen so lru_group just fits into a single cache line. */
-static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 3 : 5;
+//static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 3 : 5;
+static const int LRU_ASSOC = sizeof(size_t) == 8 ? 5 : -1; // FIXME
 
 /** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
@@ -182,9 +181,9 @@ static inline uint round_power(uint size, uint power)
 }
 
 /** @internal Compute the size of a lru_group_t of given associativity. */
-static inline uint sizeof_group(uint assoc)
+static inline uint sizeof_group()
 {
-	uint byte_size = (size_t)(&((lru_group_t *)0)->items[assoc]);
+	uint byte_size = (size_t)(&((lru_group_t *)0)->items[LRU_ASSOC]);
 	return round_power(byte_size, 6); // CACHE_ALIGNED
 }
 
@@ -192,13 +191,13 @@ static inline uint sizeof_group(uint assoc)
 static inline lru_group_t * get_group(struct lru *lru, uint group_index)
 {
 	assert(group_index < (1 << lru->log_groups));
-	uint stride = sizeof_group(lru->assoc);
+	uint stride = sizeof_group();
 	return (lru_group_t *)(lru->group_data + stride * group_index);
 }
 
 
 void lru_free_items_impl(struct lru *lru);
-struct lru * lru_create_impl(uint max_slots, uint assoc, knot_mm_t *mm);
+struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm);
 void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 			uint val_len, bool do_insert);
 void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton);
@@ -216,6 +215,6 @@ static inline void lru_free_impl(struct lru *lru)
 static inline void lru_reset_impl(struct lru *lru)
 {
 	lru_free_items_impl(lru);
-	memset(lru->group_data, 0, (1 << lru->log_groups) * sizeof_group(lru->assoc));
+	memset(lru->group_data, 0, (1 << lru->log_groups) * sizeof_group());
 }
 
