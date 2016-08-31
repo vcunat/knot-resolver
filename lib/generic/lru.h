@@ -141,8 +141,18 @@
 	lru_apply_impl(&(table)->lru, (lru_apply_fun)(function), (baton)); \
 	} while (false)
 
+/** @brief Round the value up to a multiple of (1 << power). */
+static inline uint round_power(uint size, uint power)
+{
+	uint res = ((size - 1) & ~((1 << power) - 1)) + (1 << power);
+	assert(__builtin_ctz(res) >= power);
+	assert(size <= res && res < size + (1 << power));
+	return res;
+}
+
 
 /* ======================== Inlined part of implementation ======================== */
+/** @cond internal */
 
 #define lru_apply_fun_g(name, val_type) \
 	int (*(name))(const char *key, uint len, val_type *val, void *baton)
@@ -154,15 +164,22 @@ typedef lru_apply_fun_g(lru_apply_fun, void);
 	#define CACHE_ALIGNED
 #endif
 
+struct lru;
+void lru_free_items_impl(struct lru *lru);
+struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm);
+void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
+			uint val_len, bool do_insert);
+void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton);
+
 struct lru_item;
 
 #if SIZE_MAX > (1 << 32)
 	/** @internal The number of keys stored within each group. */
-	#define LRU_ASSOC 2
-#else
 	#define LRU_ASSOC 3
+#else
+	#define LRU_ASSOC 4
 #endif
-/** @internal The number of hashes tracked within each group: 12-1 or 13-1. */
+/** @internal The number of hashes tracked within each group: 10-1 or 12-1. */
 #define LRU_TRACKED ((64 - sizeof(size_t) * LRU_ASSOC) / 4 - 1)
 
 struct lru_group {
@@ -170,33 +187,17 @@ struct lru_group {
 	uint16_t hashes[LRU_TRACKED+1]; /*!< Top halves of hashes; the last one is unused. */
 	struct lru_item *items[LRU_ASSOC]; /*!< The full items. */
 } CACHE_ALIGNED;
-typedef struct lru_group lru_group_t;
 
 /* The sizes are chosen so lru_group just fits into a single x86 cache line. */
-_Static_assert(64 == sizeof(lru_group_t)
+_Static_assert(64 == sizeof(struct lru_group)
 		&& 64 == LRU_ASSOC * sizeof(void*) + (LRU_TRACKED+1) * 4,
 		"bad sizing for you sizeof(void*)");
 
 struct lru {
 	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
 	uint log_groups; /**< Logarithm of the number of LRU groups. */
-	lru_group_t groups[] CACHE_ALIGNED; /**< The groups of items. */
+	struct lru_group groups[] CACHE_ALIGNED; /**< The groups of items. */
 };
-
-/** @brief Round the value up to a multiple of (1 << power). */
-static inline uint round_power(uint size, uint power)
-{
-	uint res = ((size - 1) & ~((1 << power) - 1)) + (1 << power);
-	assert(__builtin_ctz(res) >= power);
-	assert(size <= res && res < size + (1 << power));
-	return res;
-}
-
-void lru_free_items_impl(struct lru *lru);
-struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm);
-void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
-			uint val_len, bool do_insert);
-void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton);
 
 /** @internal See lru_free. */
 static inline void lru_free_impl(struct lru *lru)
@@ -213,4 +214,6 @@ static inline void lru_reset_impl(struct lru *lru)
 	lru_free_items_impl(lru);
 	memset(lru->groups, 0, sizeof(lru->groups[0]) * (1 << lru->log_groups));
 }
+
+/** @endcond */
 

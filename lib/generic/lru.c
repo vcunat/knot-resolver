@@ -17,6 +17,8 @@
 #include "lib/generic/lru.h"
 #include "contrib/murmurhash3/murmurhash3.h"
 
+typedef struct lru_group lru_group_t;
+
 struct lru_item {
 	uint8_t key_len, val_len; /**< Single byte should be enough for our purposes. */
 	char data[];              /**< Place for both key and value. */
@@ -43,7 +45,7 @@ static uint item_size(uint key_len, uint val_len)
 }
 
 /** @internal Free each item. */
-KR_EXPORT void lru_free_items_impl(struct lru *lru) // TODO: re-read
+KR_EXPORT void lru_free_items_impl(struct lru *lru)
 {
 	assert(lru);
 	for (int i = 0; i < (1 << lru->log_groups); ++i) {
@@ -52,7 +54,6 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru) // TODO: re-read
 			mm_free(lru->mm, g->items[j]);
 	}
 }
-
 
 /** @internal See lru_apply. */
 KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton) // TODO: re-read
@@ -69,6 +70,8 @@ KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton) // 
 			if (ret < 0) { // evict
 				mm_free(lru->mm, it);
 				g->items[j] = NULL;
+				g->counts[j] = 0;
+				g->hashes[j] = 0;
 			}
 		}
 	}
@@ -111,6 +114,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 #if defined(NDEBUG) && defined(__GNUC__)
 	#pragma GCC optimize "-ftree-vectorize"
 #endif
+
 /** @internal Decrement all counters within a group. */
 static void group_dec_counts(lru_group_t *g) {
 	g->counts[LRU_TRACKED] = LRU_TRACKED;
@@ -118,6 +122,7 @@ static void group_dec_counts(lru_group_t *g) {
 		if (likely(g->counts[i]))
 			--g->counts[i];
 }
+
 /** @internal Increment a counter within a group. */
 static void group_inc_count(lru_group_t *g, int i) {
 	if (likely(++(g->counts[i])))
@@ -125,6 +130,7 @@ static void group_inc_count(lru_group_t *g, int i) {
 	g->counts[i] = -1;
 	// We could've decreased or halved all of them, but let's keep the max.
 }
+
 /** @internal Implementation of both getting and insertion. */
 KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				uint val_len, bool do_insert)
