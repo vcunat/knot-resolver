@@ -100,9 +100,31 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 	return lru;
 }
 
+/** Swap two places; it could be made public if useful elsewhere. */
+#define swap(x, y) do { /* http://stackoverflow.com/a/3982430/587396 */ \
+	unsigned char swap_temp[sizeof(x) == sizeof(y) ? (signed)sizeof(x) : -1]; \
+	memcpy(swap_temp, &y, sizeof(x)); \
+	memcpy(&y,        &x, sizeof(x)); \
+	memcpy(&x, swap_temp, sizeof(x)); \
+	} while(0)
+
 #if defined(NDEBUG) && defined(__GNUC__)
 	#pragma GCC optimize "-ftree-vectorize"
 #endif
+/** @internal Decrement all counters within a group. */
+static void group_dec_counts(lru_group_t *g) {
+	g->counts[LRU_TRACKED] = LRU_TRACKED;
+	for (int i = 0; i < LRU_TRACKED + 1; ++i) // vectorized?
+		if (likely(g->counts[i]))
+			--g->counts[i];
+}
+/** @internal Increment a counter within a group. */
+static void group_inc_count(lru_group_t *g, int i) {
+	if (likely(++(g->counts[i])))
+       		return;
+	g->counts[i] = -1;
+	// We could've decreased or halved all of them, but let's keep the max.
+}
 /** @internal Implementation of both getting and insertion. */
 KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				uint val_len, bool do_insert)
@@ -123,30 +145,38 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 					&& memcmp(it->data, key, key_len) == 0))
 				goto found; // to reduce huge nesting depth
 		}
-	// key not found -> find a place to insert
+	// key not found; first try an empty/counted-out place to insert
 	if (do_insert)
 		for (i = 0; i < LRU_ASSOC; ++i)
-			if (g->counts[i] == 0)
+			if (g->items[i] == NULL || g->counts[i] == 0)
 				goto insert;
-	//// fail to get/insert: we'll return NULL but first update counts
-	// first, check if we track key's count at least
+	// check if we track key's count at least
 	for (i = LRU_ASSOC; i < LRU_TRACKED; ++i)
-		g->counts[i] += (g->hashes[i] == khash_top);
-	//^^ vectorizable form; we go through below even if we incremented,
-	//    but the cache-miss ratio seems unharmed and speed improves on x86_64
-	//vv decrement all counts but only on every LRU_TRACKED occasion
-	if (g->counts[LRU_TRACKED]) {
+		if (g->hashes[i] == khash_top) {
+			group_inc_count(g, i);
+			if (!do_insert)
+				return NULL;
+			// check if we trumped some stored key
+			for (int j = 0; j < LRU_ASSOC; ++j)
+				if (unlikely(g->counts[i] > g->counts[j])) {
+					// evict key j, i.e. swap with i
+					--g->counts[i]; // we increment it below
+					swap(g->counts[i], g->counts[j]);
+					swap(g->hashes[i], g->hashes[j]);
+					i = j;
+					goto insert;
+				}
+			return NULL;
+		}
+	// not found at all: decrement all counts but only on every LRU_TRACKED occasion
+	if (g->counts[LRU_TRACKED])
 		--g->counts[LRU_TRACKED];
-	} else {
-		g->counts[LRU_TRACKED] = LRU_TRACKED;
-		for (i = 0; i < LRU_TRACKED + 1; ++i) // vectorized
-			--g->counts[i];
-	}
+	else
+		group_dec_counts(g);
 	return NULL;
 insert: // insert into position i (incl. key)
 	assert(i >= 0 && i < LRU_ASSOC);
 	g->hashes[i] = khash_top;
-	assert(g->counts[i] == 0); // incremented below
 	it = g->items[i];
 	uint new_size = item_size(key_len, val_len);
 	if (it == NULL || new_size != item_size(it->key_len, it->val_len)) {
@@ -162,7 +192,7 @@ insert: // insert into position i (incl. key)
 	memset(item_val(it), 0, val_len); // clear the value
 found: // key and hash OK on g->items[i]; now update stamps
 	assert(i >= 0 && i < LRU_ASSOC);
-	++g->counts[i];
+	group_inc_count(g, i);
 	return item_val(g->items[i]);
 }
 

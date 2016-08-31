@@ -159,20 +159,27 @@ struct lru {
 
 struct lru_item;
 
-#define LRU_TRACKED 11
-#define LRU_ASSOC 2
+#if SIZE_MAX > (1 << 32)
+	/** @internal The number of keys stored within each group. */
+	#define LRU_ASSOC 2
+#else
+	#define LRU_ASSOC 3
+#endif
+/** @internal The number of hashes tracked within each group: 12-1 or 13-1. */
+#define LRU_TRACKED ((64 - sizeof(size_t) * LRU_ASSOC) / 4 - 1)
 
 struct lru_group {
-	uint16_t counts[LRU_TRACKED+1];
-	uint16_t hashes[LRU_TRACKED+1];
-	struct lru_item *items[LRU_ASSOC];
+	uint16_t counts[LRU_TRACKED+1]; /*!< Occurence counters; the last one is special. */
+	uint16_t hashes[LRU_TRACKED+1]; /*!< Top halves of hashes; the last one is unused. */
+	struct lru_item *items[LRU_ASSOC]; /*!< The full items. */
 } CACHE_ALIGNED;
 typedef struct lru_group lru_group_t;
 
-/** @internal Default associativity for LRU.
- * ATM it's chosen so lru_group just fits into a single cache line. */
-//static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 3 : 5;
-//static const int LRU_ASSOC = sizeof(size_t) == 8 ? 5 : -1; // FIXME
+/* The sizes are chosen so lru_group just fits into a single x86 cache line. */
+_Static_assert(64 == sizeof(lru_group_t)
+		&& 64 == LRU_ASSOC * sizeof(void*) + (LRU_TRACKED+1) * 4,
+		"bad sizing for you sizeof(void*)");
+
 
 /** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
