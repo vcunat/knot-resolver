@@ -107,35 +107,43 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	assert(lru && (key || !key_len) && key_len < 256);
 	// find the right group
 	uint32_t khash = hash(key, key_len);
+	uint16_t khash_top = khash >> 16;
 	uint32_t id = khash & ((1 << lru->log_groups) - 1);
 	lru_group_t *g = get_group(lru, id);
 	struct lru_item *it;
 	int i;
 	// scan the group
 	for (i = 0; i < LRU_ASSOC; ++i)
-		if (g->hashes[i] == (khash >> 16)) {
+		if (g->hashes[i] == khash_top) {
 			it = g->items[i];
-			if (it && it->key_len == key_len && memcmp(it->data, key, key_len) == 0)
+			if (likely(it && it->key_len == key_len
+					&& memcmp(it->data, key, key_len) == 0))
 				goto found; // to reduce huge nesting depth
 		}
-	if (!do_insert)
-		return NULL;
 	// key not found -> find a place to insert
-	for (i = 0; i < LRU_ASSOC; ++i)
-		if (g->counts[i] == 0)
-			goto insert;
-	// fail to insert
-	if (g->counts[LRU_ASSOC]) {
-		--g->counts[LRU_ASSOC];
-	} else {
-		g->counts[LRU_ASSOC] = LRU_ASSOC - 1;
+	if (do_insert)
 		for (i = 0; i < LRU_ASSOC; ++i)
+			if (g->counts[i] == 0)
+				goto insert;
+	//// fail to get/insert: we'll return NULL but first update counts
+	// first, check if we track key's count at least
+	for (i = LRU_ASSOC; i < LRU_TRACKED; ++i)
+		if (g->hashes[i] == khash_top) {
+			++g->counts[i];
+			return NULL;
+		}
+	// decrement all counts but only on every LRU_TRACKED occasion
+	if (g->counts[LRU_TRACKED]) {
+		--g->counts[LRU_TRACKED];
+	} else {
+		g->counts[LRU_TRACKED] = LRU_TRACKED - 1;
+		for (i = 0; i < LRU_TRACKED; ++i)
 			--g->counts[i];
 	}
 	return NULL;
 insert: // insert into position i (incl. key)
 	assert(i >= 0 && i < LRU_ASSOC);
-	g->hashes[i] = khash >> 16;
+	g->hashes[i] = khash_top;
 	assert(g->counts[i] == 0); // incremented below
 	it = g->items[i];
 	uint new_size = item_size(key_len, val_len);
@@ -151,6 +159,7 @@ insert: // insert into position i (incl. key)
 	memcpy(it->data, key, key_len);
 	memset(item_val(it), 0, val_len); // clear the value
 found: // key and hash OK on g->items[i]; now update stamps
+	assert(i >= 0 && i < LRU_ASSOC);
 	++g->counts[i];
 	return item_val(g->items[i]);
 }

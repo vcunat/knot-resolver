@@ -159,17 +159,20 @@ struct lru {
 
 struct lru_item;
 
+#define LRU_TRACKED 11
+#define LRU_ASSOC 2
+
 struct lru_group {
-	uint16_t counts[6];
-	uint16_t hashes[6];
-	struct lru_item *items[];
+	uint16_t counts[LRU_TRACKED+1];
+	uint16_t hashes[LRU_TRACKED+1];
+	struct lru_item *items[LRU_ASSOC];
 } CACHE_ALIGNED;
 typedef struct lru_group lru_group_t;
 
 /** @internal Default associativity for LRU.
  * ATM it's chosen so lru_group just fits into a single cache line. */
 //static const int LRU_ASSOC_DEFAULT = sizeof(size_t) == 8 ? 3 : 5;
-static const int LRU_ASSOC = sizeof(size_t) == 8 ? 5 : -1; // FIXME
+//static const int LRU_ASSOC = sizeof(size_t) == 8 ? 5 : -1; // FIXME
 
 /** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
