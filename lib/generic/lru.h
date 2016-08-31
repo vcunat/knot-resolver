@@ -33,8 +33,12 @@
  * 	lru_create(&lru, 5, NULL);
  *
  * 	// Insert some values
- * 	*lru_get_new(lru, "luke", strlen("luke")) = 42;
- * 	*lru_get_new(lru, "leia", strlen("leia")) = 24;
+ * 	int *pi = lru_get_new(lru, "luke", strlen("luke"));
+ * 	if (pi)
+ * 		*pi = 42;
+ * 	pi = lru_get_new(lru, "leia", strlen("leia"));
+ * 	if (pi)
+ * 		*pi = 24;
  *
  * 	// Retrieve values
  * 	int *ret = lru_get_try(lru, "luke", strlen("luke"));
@@ -116,7 +120,7 @@
  * @param table pointer to LRU
  * @param key_ lookup key
  * @param len_ key length
- * @return pointer to data or NULL if out-of-memory
+ * @return pointer to data or NULL (can be even if memory could be allocated!)
  */
 #define lru_get_new(table, key_, len_) \
 	(__typeof__((table)->pdata_t)) \
