@@ -121,18 +121,22 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	if (!do_insert)
 		return NULL;
 	// key not found -> find a place to insert
-	uint best_i = -1;
-	uint best_count = -1;
-	for (i = 0; i < LRU_ASSOC; ++i) {
-		if (g->counts[i] < best_count) {
-			best_i = i;
-			best_count = g->counts[i];
-		}
+	for (i = 0; i < LRU_ASSOC; ++i)
+		if (g->counts[i] == 0)
+			goto insert;
+	// fail to insert
+	if (g->counts[LRU_ASSOC]) {
+		--g->counts[LRU_ASSOC];
+	} else {
+		g->counts[LRU_ASSOC] = LRU_ASSOC - 1;
+		for (i = 0; i < LRU_ASSOC; ++i)
+			--g->counts[i];
 	}
-	i = best_i;
-	// insert into position i (incl. key)
+	return NULL;
+insert: // insert into position i (incl. key)
 	assert(i >= 0 && i < LRU_ASSOC);
 	g->hashes[i] = khash >> 16;
+	assert(g->counts[i] == 0); // incremented below
 	it = g->items[i];
 	uint new_size = item_size(key_len, val_len);
 	if (it == NULL || new_size != item_size(it->key_len, it->val_len)) {
