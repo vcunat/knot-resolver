@@ -100,6 +100,9 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 	return lru;
 }
 
+#if defined(NDEBUG) && defined(__GNUC__)
+	#pragma GCC optimize "-ftree-vectorize"
+#endif
 /** @internal Implementation of both getting and insertion. */
 KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				uint val_len, bool do_insert)
@@ -112,7 +115,7 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	lru_group_t *g = get_group(lru, id);
 	struct lru_item *it;
 	int i;
-	// scan the group
+	// scan the *stored* elements in the group
 	for (i = 0; i < LRU_ASSOC; ++i)
 		if (g->hashes[i] == khash_top) {
 			it = g->items[i];
@@ -128,16 +131,15 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	//// fail to get/insert: we'll return NULL but first update counts
 	// first, check if we track key's count at least
 	for (i = LRU_ASSOC; i < LRU_TRACKED; ++i)
-		if (g->hashes[i] == khash_top) {
-			++g->counts[i];
-			return NULL;
-		}
-	// decrement all counts but only on every LRU_TRACKED occasion
+		g->counts[i] += (g->hashes[i] == khash_top);
+	//^^ vectorizable form; we go through below even if we incremented,
+	//    but the cache-miss ratio seems unharmed and speed improves on x86_64
+	//vv decrement all counts but only on every LRU_TRACKED occasion
 	if (g->counts[LRU_TRACKED]) {
 		--g->counts[LRU_TRACKED];
 	} else {
-		g->counts[LRU_TRACKED] = LRU_TRACKED - 1;
-		for (i = 0; i < LRU_TRACKED; ++i)
+		g->counts[LRU_TRACKED] = LRU_TRACKED;
+		for (i = 0; i < LRU_TRACKED + 1; ++i) // vectorized
 			--g->counts[i];
 	}
 	return NULL;
