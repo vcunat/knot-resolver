@@ -96,7 +96,7 @@ static unsigned eval_addr_set(pack_t *addr_set, kr_nsrep_lru_t *rttcache, unsign
 		}
 		/* Get RTT for this address (if known) */
 		if (is_valid) {
-			unsigned *cached = rttcache ? lru_get(rttcache, val, len) : NULL;
+			unsigned *cached = rttcache ? lru_get_try(rttcache, val, len) : NULL;
 			unsigned addr_score = (cached) ? *cached : KR_NS_GLUED;
 			if (addr_score < score + favour) {
 				/* Shake down previous contenders */
@@ -122,7 +122,8 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 
 	/* Fetch NS reputation */
 	if (ctx->cache_rep) {
-		unsigned *cached = lru_get(ctx->cache_rep, k, knot_dname_size((const uint8_t *)k));
+		unsigned *cached = lru_get_try(ctx->cache_rep, k,
+					knot_dname_size((const uint8_t *)k));
 		if (cached) {
 			reputation = *cached;
 		}
@@ -240,7 +241,7 @@ int kr_nsrep_update_rtt(struct kr_nsrep *ns, const struct sockaddr *addr,
 			addr_len = sizeof(struct in6_addr);
 		}
 	}
-	unsigned *cur = lru_set(cache, addr_in, addr_len);
+	unsigned *cur = lru_get_new(cache, addr_in, addr_len);
 	if (!cur) {
 		return kr_error(ENOMEM);
 	}
@@ -275,7 +276,7 @@ int kr_nsrep_update_rep(struct kr_nsrep *ns, unsigned reputation, kr_nsrep_lru_t
 	/* Store in the struct */
 	ns->reputation = reputation;
 	/* Store reputation in the LRU cache */
-	unsigned *cur = lru_set(cache, (const char *)ns->name, knot_dname_size(ns->name));
+	unsigned *cur = lru_get_new(cache, (const char *)ns->name, knot_dname_size(ns->name));
 	if (!cur) {
 		return kr_error(ENOMEM);
 	}
