@@ -47,7 +47,7 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru) // TODO: re-read
 {
 	assert(lru);
 	for (int i = 0; i < (1 << lru->log_groups); ++i) {
-		lru_group_t *g = get_group(lru, i);
+		lru_group_t *g = &lru->groups[i];
 		for (int j = 0; j < LRU_ASSOC; ++j)
 			mm_free(lru->mm, g->items[j]);
 	}
@@ -59,7 +59,7 @@ KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton) // 
 {
 	assert(lru);
 	for (int i = 0; i < (1 << lru->log_groups); ++i) {
-		lru_group_t *g = get_group(lru, i);
+		lru_group_t *g = &lru->groups[i];
 		for (int j = 0; j < LRU_ASSOC; ++j) {
 			struct lru_item *it = g->items[j];
 			if (!it)
@@ -87,7 +87,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 	group_count = 1 << log_groups;
 	assert(max_slots <= group_count * LRU_ASSOC && group_count * LRU_ASSOC < 2 * max_slots);
 
-	size_t size = offsetof(struct lru, group_data) + group_count * sizeof_group();
+	size_t size = offsetof(struct lru, groups[group_count]);
 	struct lru *lru = mm_alloc(mm, size);
 	if (unlikely(lru == NULL))
 		return NULL;
@@ -96,7 +96,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 		.log_groups = log_groups,
 	};
 	// zeros are a good init
-	memset(lru->group_data, 0, group_count * sizeof_group());
+	memset(lru->groups, 0, offsetof(struct lru, groups[group_count]));
 	return lru;
 }
 
@@ -133,8 +133,7 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	// find the right group
 	uint32_t khash = hash(key, key_len);
 	uint16_t khash_top = khash >> 16;
-	uint32_t id = khash & ((1 << lru->log_groups) - 1);
-	lru_group_t *g = get_group(lru, id);
+	lru_group_t *g = &lru->groups[khash & ((1 << lru->log_groups) - 1)];
 	struct lru_item *it;
 	int i;
 	// scan the *stored* elements in the group

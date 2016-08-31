@@ -150,13 +150,6 @@ typedef lru_apply_fun_g(lru_apply_fun, void);
 	#define CACHE_ALIGNED
 #endif
 
-struct lru {
-	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
-	uint log_groups; /**< Logarithm of the number of LRU groups. */
-		//assoc; /**< The maximal number of items per group. */
-	char group_data[] CACHE_ALIGNED; /**< Holds the lru_group_t instances. */
-};
-
 struct lru_item;
 
 #if SIZE_MAX > (1 << 32)
@@ -180,6 +173,11 @@ _Static_assert(64 == sizeof(lru_group_t)
 		&& 64 == LRU_ASSOC * sizeof(void*) + (LRU_TRACKED+1) * 4,
 		"bad sizing for you sizeof(void*)");
 
+struct lru {
+	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
+	uint log_groups; /**< Logarithm of the number of LRU groups. */
+	lru_group_t groups[] CACHE_ALIGNED; /**< The groups of items. */
+};
 
 /** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
@@ -189,22 +187,6 @@ static inline uint round_power(uint size, uint power)
 	assert(size <= res && res < size + (1 << power));
 	return res;
 }
-
-/** @internal Compute the size of a lru_group_t of given associativity. */
-static inline uint sizeof_group()
-{
-	uint byte_size = (size_t)(&((lru_group_t *)0)->items[LRU_ASSOC]);
-	return round_power(byte_size, 6); // CACHE_ALIGNED
-}
-
-/** @internal Return pointer to the group on position group_index. */
-static inline lru_group_t * get_group(struct lru *lru, uint group_index)
-{
-	assert(group_index < (1 << lru->log_groups));
-	uint stride = sizeof_group();
-	return (lru_group_t *)(lru->group_data + stride * group_index);
-}
-
 
 void lru_free_items_impl(struct lru *lru);
 struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm);
@@ -225,6 +207,6 @@ static inline void lru_free_impl(struct lru *lru)
 static inline void lru_reset_impl(struct lru *lru)
 {
 	lru_free_items_impl(lru);
-	memset(lru->group_data, 0, (1 << lru->log_groups) * sizeof_group());
+	memset(lru->groups, 0, offsetof(struct lru, groups[1 << lru->log_groups]));
 }
 
