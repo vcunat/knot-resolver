@@ -15,12 +15,14 @@
  */
 /**
  * @file lru.h
- * @brief LRU-like cache.
+ * @brief A lossy cache.
  *
- *
- * @note The implementation is a pseudo-LRU similar to what CPU caches do:
- *     hashing is used to split keys into small groups pseudo-randomly,
- *     and almost-perfect LRU is done within each group.
+ * @note The implementation tries to keep frequent keys and avoid others,
+ *  even if "used recently", so it may refuse to store it on lru_get_new().
+ *  It uses hashing to split the problem pseudo-randomly into smaller groups,
+ *  and within each it tries to approximate relative usage counts of several
+ *  most frequent keys/hashes.  This tracking is done for *more* keys than
+ *  those that are actually stored.
  *
  * # Example usage:
  *
