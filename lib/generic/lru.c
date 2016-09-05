@@ -20,8 +20,8 @@
 typedef struct lru_group lru_group_t;
 
 struct lru_item {
-	uint8_t key_len, val_len; /**< Single byte should be enough for our purposes. */
-	char data[];              /**< Place for both key and value. */
+	uint16_t key_len, val_len; /**< Two bytes should be enough for our purposes. */
+	char data[];               /**< Place for both key and value. */
 };
 
 /** @internal Compute offset of value in struct lru_item. */
@@ -56,7 +56,7 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru)
 }
 
 /** @internal See lru_apply. */
-KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton) // TODO: re-read
+KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 {
 	assert(lru);
 	for (int i = 0; i < (1 << lru->log_groups); ++i) {
@@ -131,11 +131,13 @@ static void group_inc_count(lru_group_t *g, int i) {
 	// We could've decreased or halved all of them, but let's keep the max.
 }
 
-/** @internal Implementation of both getting and insertion. */
+/** @internal Implementation of both getting and insertion.
+ * Note: val_len is only meaningful if do_insert. */
 KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				uint val_len, bool do_insert)
 {
-	assert(lru && (key || !key_len) && key_len < 256);
+	assert(lru && (key || !key_len) && key_len <= UINT16_MAX
+		   && (!do_insert || val_len <= UINT16_MAX));
 	// find the right group
 	uint32_t khash = hash(key, key_len);
 	uint16_t khash_top = khash >> 16;
