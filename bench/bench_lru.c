@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -11,6 +12,11 @@
 
 typedef kr_nsrep_lru_t lru_bench_t;
 
+#define p_out(...) do { \
+	printf(__VA_ARGS__); \
+	fflush(stdout); \
+	} while (0)
+#define p_err(...) fprintf(stderr, __VA_ARGS__)
 
 static int die(const char *cause)
 {
@@ -36,7 +42,11 @@ static void time_print_diff(struct timeval *tv, size_t op_count)
 
 	size_t speed = round((double)(op_count) / 1000
 		/ (now.tv_sec + (double)(now.tv_usec)/1000000));
-	printf("\t%ld.%06d s, \t %zd kop/s\n", now.tv_sec, (int)now.tv_usec, speed);
+
+	p_out("%ld.%06d", now.tv_sec, (int)now.tv_usec);
+	p_err(" s"); p_out(","); p_err("\t");
+	p_out("%zd", speed);
+	p_err(" kops/s"); p_out(","); p_err("\n");
 }
 
 /// initialize seed for random()
@@ -92,7 +102,11 @@ static struct key * read_lines(const char *fname, size_t *count, char **pfree)
 		}
 	*count = lines;
 	size_t avg_len = (flen + 1) / lines - 1;
-	printf("%zu lines read, average length %zu\n", lines, avg_len);
+
+	p_err("\nlines read: ");
+	p_out("%zu,", lines);
+	p_err("\taverage length ");
+	p_out("%zu,", avg_len);
 
 	struct key *result = calloc(lines, sizeof(struct key));
 	result[0].chars = fbuf;
@@ -130,10 +144,12 @@ static struct key * read_lines(const char *fname, size_t *count, char **pfree)
 
 static void usage(const char *progname)
 {
-	fprintf(stderr, "usage: %s <log_count> <input> <seed> [lru_size]\n"
-		"The seed must be at least 12 characters or \"-\".\n" , progname);
+	p_err("usage: %s <log_count> <input> <seed> [lru_size]\n", progname);
+	p_err("The seed must be at least 12 characters or \"-\".\n"
+		"Standard output contains csv-formatted lines.\n");
 	exit(1);
 }
+
 
 int main(int argc, char ** argv)
 {
@@ -142,6 +158,7 @@ int main(int argc, char ** argv)
 	if (ssrandom(argv[3]) < 0)
 		usage(argv[0]);
 
+	p_out("\n");
 	size_t key_count;
 	char *data_to_free = NULL;
 	struct key *keys = read_lines(argv[2], &key_count, &data_to_free);
@@ -150,7 +167,8 @@ int main(int argc, char ** argv)
 		size_t run_log = atoi(argv[1]);
 		assert(run_log < 64);
 		run_count = 1ULL << run_log;
-		printf("test run length: 2^%zd\n", run_log);
+		p_err("test run length:\t2^");
+		p_out("%zd,", run_log);
 	}
 
 	struct timeval time;
@@ -166,10 +184,17 @@ int main(int argc, char ** argv)
 	#endif
 	if (!lru)
 		die("malloc");
-	printf("LRU size:\t%d\n", lru_size);
+	p_err("\nLRU capacity:\t");
+	p_out("%d,",
+		#ifdef lru_capacity
+			lru_capacity(lru) // report real capacity, if provided
+		#else
+			lru_size
+		#endif
+		);
 
 	size_t miss = 0;
-	printf("load everything:");
+	p_err("\nload everything:\t");
 	time_get(&time);
 	for (size_t i = 0, ki = key_count - 1; i < run_count; ++i, --ki) {
 		unsigned *r = lru_get_new(lru, keys[ki].chars, keys[ki].len);
@@ -181,10 +206,12 @@ int main(int argc, char ** argv)
 			ki = key_count;
 	}
 	time_print_diff(&time, run_count);
-	printf("LRU misses:\t%zd%%\n", (miss * 100 + 50) / run_count);
+	p_err("LRU misses:\t");
+	p_out("%zd,",(miss * 100 + 50) / run_count);
+	p_err("\n");
 
 	unsigned accum = 0; // compute something to make sure compiler can't remove code
-	printf("search everything:");
+	p_err("search everything:\t");
 	time_get(&time);
 	for (size_t i = 0, ki = key_count - 1; i < run_count; ++i, --ki) {
 		unsigned *r = lru_get_try(lru, keys[ki].chars, keys[ki].len);
@@ -194,7 +221,7 @@ int main(int argc, char ** argv)
 			ki = key_count;
 	}
 	time_print_diff(&time, run_count);
-	printf("ignore: %u\n", accum);
+	p_err("ignore: %u\n", accum);
 
 	// free memory, at least with new LRU
 	#ifdef lru_create

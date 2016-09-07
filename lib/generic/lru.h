@@ -143,6 +143,14 @@
 	lru_apply_impl(&(table)->lru, (lru_apply_fun)(function), (baton)); \
 	} while (false)
 
+/**
+ * @brief Return the real capacity - maximum number of keys holdable within.
+ *
+ * @param table pointer to LRU
+ */
+#define lru_capacity(table) lru_capacity_impl(&(table)->lru)
+
+
 /** @brief Round the value up to a multiple of (1 << power). */
 static inline uint round_power(uint size, uint power)
 {
@@ -215,6 +223,13 @@ static inline void lru_reset_impl(struct lru *lru)
 {
 	lru_free_items_impl(lru);
 	memset(lru->groups, 0, sizeof(lru->groups[0]) * (1 << lru->log_groups));
+}
+
+/** @internal See lru_capacity. */
+static inline uint lru_capacity_impl(struct lru *lru)
+{
+	assert(lru);
+	return (1 << lru->log_groups) * LRU_ASSOC;
 }
 
 /** @endcond */
