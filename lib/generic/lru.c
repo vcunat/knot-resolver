@@ -48,7 +48,7 @@ static uint item_size(uint key_len, uint val_len)
 KR_EXPORT void lru_free_items_impl(struct lru *lru)
 {
 	assert(lru);
-	for (int i = 0; i < (1 << lru->log_groups); ++i) {
+	for (size_t i = 0; i < (1 << (size_t)lru->log_groups); ++i) {
 		lru_group_t *g = &lru->groups[i];
 		for (int j = 0; j < LRU_ASSOC; ++j)
 			mm_free(lru->mm, g->items[j]);
@@ -59,9 +59,9 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru)
 KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 {
 	assert(lru);
-	for (int i = 0; i < (1 << lru->log_groups); ++i) {
+	for (size_t i = 0; i < (1 << (size_t)lru->log_groups); ++i) {
 		lru_group_t *g = &lru->groups[i];
-		for (int j = 0; j < LRU_ASSOC; ++j) {
+		for (uint j = 0; j < LRU_ASSOC; ++j) {
 			struct lru_item *it = g->items[j];
 			if (!it)
 				continue;
@@ -105,7 +105,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 
 /** Swap two places; it could be made public if useful elsewhere. */
 #define swap(x, y) do { /* http://stackoverflow.com/a/3982430/587396 */ \
-	unsigned char swap_temp[sizeof(x) == sizeof(y) ? (signed)sizeof(x) : -1]; \
+	unsigned char swap_temp[sizeof(x) == sizeof(y) ? (ssize_t)sizeof(x) : -1]; \
 	memcpy(swap_temp, &y, sizeof(x)); \
 	memcpy(&y,        &x, sizeof(x)); \
 	memcpy(&x, swap_temp, sizeof(x)); \
@@ -118,7 +118,7 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 /** @internal Decrement all counters within a group. */
 static void group_dec_counts(lru_group_t *g) {
 	g->counts[LRU_TRACKED] = LRU_TRACKED;
-	for (int i = 0; i < LRU_TRACKED + 1; ++i) // vectorized?
+	for (uint i = 0; i < LRU_TRACKED + 1; ++i) // vectorized?
 		if (likely(g->counts[i]))
 			--g->counts[i];
 }
@@ -143,7 +143,7 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	uint16_t khash_top = khash >> 16;
 	lru_group_t *g = &lru->groups[khash & ((1 << lru->log_groups) - 1)];
 	struct lru_item *it;
-	int i;
+	uint i;
 	// scan the *stored* elements in the group
 	for (i = 0; i < LRU_ASSOC; ++i)
 		if (g->hashes[i] == khash_top) {
@@ -164,7 +164,7 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 			if (!do_insert)
 				return NULL;
 			// check if we trumped some stored key
-			for (int j = 0; j < LRU_ASSOC; ++j)
+			for (uint j = 0; j < LRU_ASSOC; ++j)
 				if (unlikely(g->counts[i] > g->counts[j])) {
 					// evict key j, i.e. swap with i
 					--g->counts[i]; // we increment it below
@@ -182,7 +182,7 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 		group_dec_counts(g);
 	return NULL;
 insert: // insert into position i (incl. key)
-	assert(i >= 0 && i < LRU_ASSOC);
+	assert(i < LRU_ASSOC);
 	g->hashes[i] = khash_top;
 	it = g->items[i];
 	uint new_size = item_size(key_len, val_len);
@@ -198,7 +198,7 @@ insert: // insert into position i (incl. key)
 	memcpy(it->data, key, key_len);
 	memset(item_val(it), 0, val_len); // clear the value
 found: // key and hash OK on g->items[i]; now update stamps
-	assert(i >= 0 && i < LRU_ASSOC);
+	assert(i < LRU_ASSOC);
 	group_inc_count(g, i);
 	return item_val(g->items[i]);
 }
