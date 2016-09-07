@@ -176,7 +176,7 @@ int main(int argc, char ** argv)
 
 	lru_bench_t *lru;
 	#ifdef lru_create
-		lru_create(&lru, lru_size, NULL);
+		lru_create(&lru, lru_size, NULL, NULL);
 	#else
 		lru = malloc(lru_size(lru_bench_t, lru_size));
 		if (lru)

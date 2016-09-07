@@ -461,9 +461,9 @@ static int init_resolver(struct engine *engine)
 	kr_zonecut_init(&engine->resolver.root_hints, (const uint8_t *)"", engine->pool);
 	kr_zonecut_set_sbelt(&engine->resolver, &engine->resolver.root_hints);
 	/* Open NS rtt + reputation cache */
-	lru_create(&engine->resolver.cache_rtt, LRU_RTT_SIZE, engine->pool);
-	lru_create(&engine->resolver.cache_rep, LRU_REP_SIZE, engine->pool);
-	lru_create(&engine->resolver.cache_cookie, LRU_COOKIES_SIZE, engine->pool);
+	lru_create(&engine->resolver.cache_rtt, LRU_RTT_SIZE, engine->pool, NULL);
+	lru_create(&engine->resolver.cache_rep, LRU_REP_SIZE, engine->pool, NULL);
+	lru_create(&engine->resolver.cache_cookie, LRU_COOKIES_SIZE, engine->pool, NULL);
 
 	/* Load basic modules */
 	engine_register(engine, "iterate", NULL, NULL);

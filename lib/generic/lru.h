@@ -88,12 +88,16 @@
  *
  * @param ptable pointer to a pointer to the LRU
  * @param max_slots number of slots
- * @param mm_ctx memory context to use for LRU and its keys, NULL for default
+ * @param mm_ctx_array memory context to use for the huge array, NULL for default
+ * @param mm_ctx memory context to use for individual key-value pairs, NULL for default
+ *
+ * @note The pointers to memory contexts need to remain valid
+ * 	during the whole life of the structure (or be NULL).
  */
-#define lru_create(ptable, max_slots, mm_ctx) do { \
+#define lru_create(ptable, max_slots, mm_ctx_array, mm_ctx) do { \
 	(void)(((__typeof__((*(ptable))->pdata_t))0) == (void *)0); /* typecheck lru_t */ \
 	*((struct lru **)(ptable)) = \
-		lru_create_impl((max_slots), (mm_ctx)); \
+		lru_create_impl((max_slots), (mm_ctx_array), (mm_ctx)); \
 	} while (false)
 
 /** @brief Free an LRU created by lru_create (it can be NULL). */
@@ -121,7 +125,7 @@
  *
  * @param table pointer to LRU
  * @param key_ lookup key
- * @param len_ key length
+ * @param len_ key lengthkeys
  * @return pointer to data or NULL (can be even if memory could be allocated!)
  */
 #define lru_get_new(table, key_, len_) \
@@ -176,7 +180,7 @@ typedef lru_apply_fun_g(lru_apply_fun, void);
 
 struct lru;
 void lru_free_items_impl(struct lru *lru);
-struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm);
+struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm_array, knot_mm_t *mm);
 void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 			uint val_len, bool do_insert);
 void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton);
@@ -204,7 +208,8 @@ _Static_assert(64 == sizeof(struct lru_group)
 		"bad sizing for you sizeof(void*)");
 
 struct lru {
-	struct knot_mm *mm; /**< Memory context to use for keys and lru itself. */
+	struct knot_mm *mm, /**< Memory context to use keys. */
+		*mm_array; /**< Memory context to use for this structure itself. */
 	uint log_groups; /**< Logarithm of the number of LRU groups. */
 	struct lru_group groups[] CACHE_ALIGNED; /**< The groups of items. */
 };

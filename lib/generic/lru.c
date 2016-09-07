@@ -78,7 +78,7 @@ KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 }
 
 /** @internal See lru_create. */
-KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
+KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm_array, knot_mm_t *mm)
 {
 	assert(max_slots);
 	// let lru->log_groups = ceil(log2(max_slots / (float) assoc))
@@ -91,11 +91,12 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm)
 	assert(max_slots <= group_count * LRU_ASSOC && group_count * LRU_ASSOC < 2 * max_slots);
 
 	size_t size = offsetof(struct lru, groups[group_count]);
-	struct lru *lru = mm_alloc(mm, size);
+	struct lru *lru = mm_alloc(mm_array, size);
 	if (unlikely(lru == NULL))
 		return NULL;
 	*lru = (struct lru){
 		.mm = mm,
+		.mm_array = mm_array,
 		.log_groups = log_groups,
 	};
 	// zeros are a good init

@@ -448,8 +448,8 @@ int stats_init(struct kr_module *module)
 	memset(data, 0, sizeof(*data));
 	data->map = map_make();
 	module->data = data;
-	lru_create(&data->queries.frequent, FREQUENT_COUNT, NULL);
-	lru_create(&data->queries.expiring, FREQUENT_COUNT, NULL);
+	lru_create(&data->queries.frequent, FREQUENT_COUNT, NULL, NULL);
+	lru_create(&data->queries.expiring, FREQUENT_COUNT, NULL, NULL);
 	/* Initialize ring buffer of recently visited upstreams */
 	array_init(data->upstreams.q);
 	if (array_reserve(data->upstreams.q, UPSTREAMS_COUNT) != 0) {

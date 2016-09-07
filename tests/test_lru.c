@@ -97,7 +97,7 @@ static void test_eviction(void **state)
 static void test_init(void **state)
 {
 	lru_int_t *lru;
-	lru_create(&lru, HASH_SIZE, NULL);
+	lru_create(&lru, HASH_SIZE, NULL, NULL);
 	assert_non_null(lru);
 	*state = lru;
 }
