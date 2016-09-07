@@ -12,16 +12,19 @@
 typedef kr_nsrep_lru_t lru_bench_t;
 
 
-static int die(const char *cause) {
+static int die(const char *cause)
+{
 	fprintf(stderr, "%s: %s\n", cause, strerror(errno));
 	exit(1);
 }
 
-static void time_get(struct timeval *tv) {
+static void time_get(struct timeval *tv)
+{
 	if (gettimeofday(tv, NULL))
 		die("gettimeofday");
 }
-static void time_print_diff(struct timeval *tv, size_t op_count) {
+static void time_print_diff(struct timeval *tv, size_t op_count)
+{
 	struct timeval now;
 	time_get(&now);
 	now.tv_sec -= tv->tv_sec;
@@ -37,7 +40,8 @@ static void time_print_diff(struct timeval *tv, size_t op_count) {
 }
 
 /// initialize seed for random()
-static int ssrandom(char *s) {
+static int ssrandom(char *s)
+{
 	if (*s == '-') { // initialize from time
 		struct timeval now;
 		time_get(&now);
@@ -60,7 +64,8 @@ struct key {
 };
 
 /// read lines from a file and reorder them randomly
-static struct key * read_lines(const char *fname, size_t *count) {
+static struct key * read_lines(const char *fname, size_t *count, char **pfree)
+{
 	// read the file at once
 	int fd = open(fname, O_RDONLY);
 	if (fd < 0)
@@ -70,6 +75,7 @@ static struct key * read_lines(const char *fname, size_t *count) {
 		die("stat");
 	size_t flen = (size_t)st.st_size;
 	char *fbuf = malloc(flen + 1);
+	*pfree = fbuf;
 	if (fbuf == NULL)
 		die("malloc");
 	if (read(fd, fbuf, flen) < 0)
@@ -122,20 +128,23 @@ static struct key * read_lines(const char *fname, size_t *count) {
 	#define lru_get_try lru_get
 #endif
 
-static void usage(const char *progname) {
+static void usage(const char *progname)
+{
 	fprintf(stderr, "usage: %s <log_count> <input> <seed> [lru_size]\n"
 		"The seed must be at least 12 characters or \"-\".\n" , progname);
 	exit(1);
 }
 
-int main(int argc, char ** argv) {
+int main(int argc, char ** argv)
+{
 	if (argc != 4 && argc != 5)
 		usage(argv[0]);
 	if (ssrandom(argv[3]) < 0)
 		usage(argv[0]);
 
 	size_t key_count;
-	struct key *keys = read_lines(argv[2], &key_count);
+	char *data_to_free = NULL;
+	struct key *keys = read_lines(argv[2], &key_count, &data_to_free);
 	size_t run_count;
 	{
 		size_t run_log = atoi(argv[1]);
@@ -160,9 +169,9 @@ int main(int argc, char ** argv) {
 	printf("LRU size:\t%d\n", lru_size);
 
 	size_t miss = 0;
-	time_get(&time);
 	printf("load everything:");
-	for (size_t i = 0, ki = key_count; i < run_count; ++i, --ki) {
+	time_get(&time);
+	for (size_t i = 0, ki = key_count - 1; i < run_count; ++i, --ki) {
 		unsigned *r = lru_get_new(lru, keys[ki].chars, keys[ki].len);
 		if (!r || *r == 0)
 			++miss;
@@ -175,9 +184,9 @@ int main(int argc, char ** argv) {
 	printf("LRU misses:\t%zd%%\n", (miss * 100 + 50) / run_count);
 
 	unsigned accum = 0; // compute something to make sure compiler can't remove code
-	time_get(&time);
 	printf("search everything:");
-	for (size_t i = 0, ki = key_count; i < run_count; ++i, --ki) {
+	time_get(&time);
+	for (size_t i = 0, ki = key_count - 1; i < run_count; ++i, --ki) {
 		unsigned *r = lru_get_try(lru, keys[ki].chars, keys[ki].len);
 		if (r)
 			accum += *r;
@@ -186,6 +195,13 @@ int main(int argc, char ** argv) {
 	}
 	time_print_diff(&time, run_count);
 	printf("ignore: %u\n", accum);
+
+	// free memory, at least with new LRU
+	#ifdef lru_create
+		lru_free(lru);
+	#endif
+	free(keys);
+	free(data_to_free);
 
 	return 0;
 }
