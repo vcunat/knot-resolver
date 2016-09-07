@@ -112,14 +112,10 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm_array, knot
 	memcpy(&x, swap_temp, sizeof(x)); \
 	} while(0)
 
-#if defined(NDEBUG) && defined(__GNUC__)
-	#pragma GCC optimize "-ftree-vectorize"
-#endif
-
 /** @internal Decrement all counters within a group. */
 static void group_dec_counts(lru_group_t *g) {
 	g->counts[LRU_TRACKED] = LRU_TRACKED;
-	for (uint i = 0; i < LRU_TRACKED + 1; ++i) // vectorized?
+	for (uint i = 0; i < LRU_TRACKED + 1; ++i)
 		if (likely(g->counts[i]))
 			--g->counts[i];
 }

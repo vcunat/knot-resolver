@@ -103,7 +103,7 @@ static struct key * read_lines(const char *fname, size_t *count, char **pfree)
 	*count = lines;
 	size_t avg_len = (flen + 1) / lines - 1;
 
-	p_err("\nlines read: ");
+	p_err("lines read: ");
 	p_out("%zu,", lines);
 	p_err("\taverage length ");
 	p_out("%zu,", avg_len);
@@ -167,7 +167,7 @@ int main(int argc, char ** argv)
 		size_t run_log = atoi(argv[1]);
 		assert(run_log < 64);
 		run_count = 1ULL << run_log;
-		p_err("test run length:\t2^");
+		p_err("\ntest run length:\t2^");
 		p_out("%zd,", run_log);
 	}
 
@@ -206,7 +206,7 @@ int main(int argc, char ** argv)
 			ki = key_count;
 	}
 	time_print_diff(&time, run_count);
-	p_err("LRU misses:\t");
+	p_err("LRU misses [%%]:\t");
 	p_out("%zd,",(miss * 100 + 50) / run_count);
 	p_err("\n");
 
