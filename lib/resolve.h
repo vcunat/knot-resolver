@@ -74,9 +74,12 @@
 
 /** Validation rank */
 typedef enum kr_validation_rank {
-	KR_VLDRANK_INITIAL  = 0,  /* Entry is not validated yet. */
-	KR_VLDRANK_INSECURE = 1,  /* Entry is DNSSEC insecure (e.g. RRSIG not exists). */
-	KR_VLDRANK_SECURE   = 32  /* Entry is DNSSEC valid (e.g. RRSIG exists). */
+	KR_VLDRANK_INITIAL   = 0,   /* Entry was just added; not validated yet. */
+	KR_VLDRANK_INSECURE  = 1,   /* Entry is DNSSEC insecure (e.g. RRSIG not exists). */
+	KR_VLDRANK_BAD	     = 2,   /* Matching RRSIG found, but validation fails. */
+	KR_VLDRANK_MISMATCH  = 3,   /* RRSIG signer name is */
+	KR_VLDRANK_UNKNOWN   = 4,   /* Unknown */
+	KR_VLDRANK_SECURE    = 5    /* Entry is DNSSEC valid (e.g. RRSIG exists). */
 } kr_validation_rank_t;
 
 /** @cond internal Array of modules. */

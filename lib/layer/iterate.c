@@ -278,14 +278,24 @@ static int pick_authority(knot_pkt_t *pkt, struct kr_request *req, bool to_wire)
 
 	uint8_t rank = !(qry->flags & QUERY_DNSSEC_WANT) || (qry->flags & QUERY_CACHED) ?
 			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
+	const knot_dname_t *zonecut_name = qry->zone_cut.name;
+	bool referral = !knot_wire_get_aa(pkt->wire);
+	if (referral) {
+		/* zone cut already updated by process_authority()
+		 * use parent zonecut name */
+		assert(qry->zone_cut.parent);
+		zonecut_name = qry->zone_cut.parent->name;
+		to_wire = false;
+	}
 
 	for (unsigned i = 0; i < ns->count; ++i) {
 		const knot_rrset_t *rr = knot_pkt_rr(ns, i);
-		if (!knot_dname_in(qry->zone_cut.name, rr->owner) &&
+		if (!knot_dname_in(zonecut_name, rr->owner) &&
 		    !contains_owner(&req->answ_selected, rr->owner)) {
 			continue;
 		}
-		int ret = kr_ranked_rrarray_add(&req->auth_selected, rr, rank, to_wire, &req->pool);
+		int ret = kr_ranked_rrarray_add(&req->auth_selected, rr,
+						rank, to_wire, &req->pool);
 		if (ret != kr_ok()) {
 			return ret;
 		}
@@ -421,7 +431,8 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 					return state;
 				}
 			}
-			state = kr_ranked_rrarray_add(&req->answ_selected, rr, rank, to_wire, &req->pool);
+			state = kr_ranked_rrarray_add(&req->answ_selected, rr,
+						      rank, to_wire, &req->pool);
 			if (state != kr_ok()) {
 				return KNOT_STATE_FAIL;
 			}
@@ -556,6 +567,11 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 			return KNOT_STATE_FAIL;
 		}
 		finalize_answer(pkt, query, req);
+	} else {
+		state = pick_authority(pkt, req, false);
+		if (state != kr_ok()) {
+			return KNOT_STATE_FAIL;
+		}
 	}
 	return KNOT_STATE_DONE;
 }
@@ -708,6 +724,7 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 		break; /* OK */
 	case KNOT_RCODE_REFUSED:
 	case KNOT_RCODE_SERVFAIL: {
+		DEBUG_MSG("<= rcode 1: %s\n", rcode ? rcode->name : "??");
 		if (query->flags & QUERY_STUB) { break; } /* Pass through in stub mode */
 		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
 		query->fails += 1;
@@ -721,10 +738,10 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	case KNOT_RCODE_FORMERR:
 	case KNOT_RCODE_NOTIMPL:
-		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
+		DEBUG_MSG("<= rcode 2: %s\n", rcode ? rcode->name : "??");
 		return resolve_badmsg(pkt, req, query);
 	default:
-		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
+		DEBUG_MSG("<= rcode 3: %s\n", rcode ? rcode->name : "??");
 		return resolve_error(pkt, req);
 	}
 
@@ -732,7 +749,7 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 	int state = process_authority(pkt, req);
 	switch(state) {
 	case KNOT_STATE_CONSUME: /* Not referral, process answer. */
-		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
+		DEBUG_MSG("<= rcode 4: %s\n", rcode ? rcode->name : "??");
 		state = process_answer(pkt, req);
 		break;
 	case KNOT_STATE_DONE: /* Referral */

@@ -97,7 +97,6 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 	 */
 	vctx->zone_name = vctx->keys ? vctx->keys->owner  : NULL;
 
-	bool validation_failed = false;
 	int ret = 0;
 	int validation_result = 0;
 	for (unsigned i = 0; i < vctx->rrs->len; ++i) {
@@ -107,7 +106,12 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			continue;
 		}
 		if (rr->type == KNOT_RRTYPE_RRSIG) {
-			entry->rank = KR_VLDRANK_SECURE;
+			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
+			if (!knot_dname_is_equal(vctx->zone_name, signer_name)) {
+				entry->rank = KR_VLDRANK_MISMATCH;
+			} else {
+				entry->rank = KR_VLDRANK_SECURE;
+			}
 			continue;
 		}
 		if ((rr->type == KNOT_RRTYPE_NS) && (vctx->section_id == KNOT_AUTHORITY)) {
@@ -115,12 +119,16 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			continue;
 		}
 		validation_result = kr_rrset_validate(vctx, rr);
-		if (validation_result != 0) {
-			validation_failed = true;
-			ret = validation_result;
-			entry->rank = KR_VLDRANK_INSECURE;
-		} else	{
+		if (validation_result == kr_ok()) {
 			entry->rank = KR_VLDRANK_SECURE;
+		} else if (validation_result == kr_error(ENOENT)) {
+			/* no RRSIGs found */
+			entry->rank = KR_VLDRANK_INSECURE;
+		} else if (validation_result == kr_error(EBADF)) {
+			/* validation fails */
+			entry->rank = KR_VLDRANK_BAD;
+		} else {
+			entry->rank = KR_VLDRANK_UNKNOWN;
 		}
 	}
 	return ret;
@@ -174,10 +182,12 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 	return ret;
 }
 
+
 static int validate_keyset(struct kr_request *req, knot_pkt_t *answer, bool has_nsec3)
 {
 	/* Merge DNSKEY records from answer that are below/at current cut. */
 	struct kr_query *qry = req->current_query;
+	const knot_dname_t *ta_name = qry->zone_cut.trust_anchor ? qry->zone_cut.trust_anchor->owner : NULL;
 	bool updated_key = false;
 	const knot_pktsection_t *an = knot_pkt_section(answer, KNOT_ANSWER);
 	for (unsigned i = 0; i < an->count; ++i) {
@@ -348,18 +358,120 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 	return ret;
 }
 
-static const knot_dname_t *signature_authority(knot_pkt_t *pkt)
+static const knot_dname_t *find_first_signer(ranked_rr_array_t *arr)
 {
-	for (knot_section_t i = KNOT_ANSWER; i <= KNOT_AUTHORITY; ++i) {
-		const knot_pktsection_t *sec = knot_pkt_section(pkt, i);
-		for (unsigned k = 0; k < sec->count; ++k) {
-			const knot_rrset_t *rr = knot_pkt_rr(sec, k);
-			if (rr->type == KNOT_RRTYPE_RRSIG) {
-				return knot_rrsig_signer_name(&rr->rrs, 0);
-			}
+	for (size_t i = 0; i < arr->len; ++i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		const knot_rrset_t *rr = entry->rr;
+		if (entry->yielded || entry->rank != KR_VLDRANK_INITIAL) {
+			continue;
+		}
+		if (rr->type == KNOT_RRTYPE_RRSIG) {
+			return knot_rrsig_signer_name(&rr->rrs, 0);
 		}
 	}
 	return NULL;
+}
+
+static const knot_dname_t *signature_authority(struct kr_request *req)
+{
+	const knot_dname_t *signer_name = find_first_signer(&req->answ_selected);
+	if (!signer_name) {
+		signer_name = find_first_signer(&req->auth_selected);
+	}
+	return signer_name;
+}
+
+static int check_validation_result(struct kr_request *req, ranked_rr_array_t *arr)
+{
+	struct kr_query *qry = req->current_query;
+	/* first search for a RRSIGs which signer name is out of current zone. */
+	for (size_t i = 0; i < arr->len; ++i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		if (entry->yielded) {
+			continue;
+		}
+		const knot_rrset_t *rr = entry->rr;
+		if (entry->rank == KR_VLDRANK_MISMATCH) {
+			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
+			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
+			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+			return KNOT_STATE_YIELD;
+		}
+	}
+	/* search for the other problematic records */
+	for (size_t i = 0; i < arr->len; ++i) {
+		ranked_rr_array_entry_t *entry = arr->at[i];
+		if (entry->yielded) {
+			continue;
+		}
+		const knot_rrset_t *rr = entry->rr;
+		if (entry->rank == KR_VLDRANK_INSECURE) {
+			/* No RRSIG found. Perhaps out-of-zone CNAME.
+			 * Get common ancestor and ask for DS. */
+			int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
+			int owner_labels = knot_dname_labels(rr->owner, NULL);
+			int skip_labels = owner_labels - matched_labels - 1;
+			const knot_dname_t *new_cut_name_start = rr->owner;
+			while (skip_labels--) {
+				new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
+			}
+			/* try to find the name wanted among ancestors */
+			struct kr_zonecut *cut = &qry->zone_cut;
+			bool cut_found = false;
+			do {
+				cut = cut->parent;
+				if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
+					cut_found = true;
+					memcpy(&qry->zone_cut, cut, sizeof(qry->zone_cut));
+					break;
+				}
+			} while (cut->parent);
+			qry->zone_cut.name = knot_dname_copy(new_cut_name_start, &req->pool);
+			if (!cut_found) {
+				qry->flags |= QUERY_AWAIT_CUT;
+			}
+			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+			return KNOT_STATE_YIELD;
+		} else if (entry->rank != KR_VLDRANK_SECURE) {
+			qry->flags |= QUERY_DNSSEC_BOGUS;
+			return KNOT_STATE_FAIL;
+		}
+	}
+	return KNOT_STATE_DONE;
+}
+
+static int check_signer(knot_layer_t *ctx, knot_pkt_t *pkt)
+{
+	struct kr_request *req = ctx->data;
+	struct kr_query *qry = req->current_query;
+	const knot_dname_t *ta_name = qry->zone_cut.trust_anchor ? qry->zone_cut.trust_anchor->owner : NULL;
+	const knot_dname_t *signer = signature_authority(req);
+	if (ta_name && (!signer || !knot_dname_is_equal(ta_name, signer))) {
+		/* check all newly added RRSIGs */
+		if (ctx->state == KNOT_STATE_YIELD) { /* Already yielded for revalidation. */
+			return KNOT_STATE_FAIL;
+		}
+		DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+		if (!signer) {
+			/* Not a DNSSEC-signed response, ask parent for DS to prove transition to INSECURE. */
+		} else if (knot_dname_is_sub(signer, qry->zone_cut.name)) {
+			/* Key signer is below current cut, advance and refetch keys. */
+			qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
+		} else if (!knot_dname_is_equal(signer, qry->zone_cut.name)) {
+			/* Key signer is above the current cut, so we can't validate it. This happens when
+			   a server is authoritative for both grandparent, parent and child zone.
+			   Ascend to parent cut, and refetch authority for signer. */
+			if (qry->zone_cut.parent) {
+				memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
+			} else {
+				qry->flags |= QUERY_AWAIT_CUT;
+			}
+			qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
+		} /* else zone cut matches, but DS/DNSKEY doesn't => refetch. */
+		return KNOT_STATE_YIELD;
+	}
+	return KNOT_STATE_DONE;
 }
 
 static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
@@ -388,40 +500,25 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Track difference between current TA and signer name.
 	 * This indicates that the NS is auth for both parent-child, and we must update DS/DNSKEY to validate it.
 	 */
-	const bool track_pc_change = (!(qry->flags & QUERY_CACHED) && (qry->flags & QUERY_DNSSEC_WANT));
-	const knot_dname_t *ta_name = qry->zone_cut.trust_anchor ? qry->zone_cut.trust_anchor->owner : NULL;
-	const knot_dname_t *signer = signature_authority(pkt);
-	if (track_pc_change && ta_name && (!signer || !knot_dname_is_equal(ta_name, signer))) {
-		if (ctx->state == KNOT_STATE_YIELD) { /* Already yielded for revalidation. */
-			return KNOT_STATE_FAIL;
+	const bool track_pc_change = !(qry->flags & QUERY_CACHED);
+	if (track_pc_change) {
+		ret = check_signer(ctx, pkt);
+		if (ret != KNOT_STATE_DONE) {
+			return ret;
 		}
-		DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
-		if (!signer) {
-			/* Not a DNSSEC-signed response, ask parent for DS to prove transition to INSECURE. */
-		} else if (knot_dname_is_sub(signer, qry->zone_cut.name)) {
-			/* Key signer is below current cut, advance and refetch keys. */
-			qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
-		} else if (!knot_dname_is_equal(signer, qry->zone_cut.name)) {
-			/* Key signer is above the current cut, so we can't validate it. This happens when
-			   a server is authoritative for both grandparent, parent and child zone.
-			   Ascend to parent cut, and refetch authority for signer. */
-			if (qry->zone_cut.parent) {
-				memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
-			} else {
-				qry->flags |= QUERY_AWAIT_CUT;
-			}
-			qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
-		} /* else zone cut matches, but DS/DNSKEY doesn't => refetch. */
-		return KNOT_STATE_YIELD;
 	}
-	
+
 	/* Check if this is a DNSKEY answer, check trust chain and store. */
 	uint8_t pkt_rcode = knot_wire_get_rcode(pkt->wire);
 	uint16_t qtype = knot_pkt_qtype(pkt);
 	bool has_nsec3 = pkt_has_type(pkt, KNOT_RRTYPE_NSEC3);
+
 	if (knot_wire_get_aa(pkt->wire) && qtype == KNOT_RRTYPE_DNSKEY) {
 		ret = validate_keyset(req, pkt, has_nsec3);
-		if (ret != 0) {
+		if (ret == kr_error(EAGAIN)) {
+			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+			return KNOT_STATE_YIELD;
+		} else if (ret != 0) {
 			DEBUG_MSG(qry, "<= bad keys, broken trust chain\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 			return KNOT_STATE_FAIL;
@@ -477,9 +574,20 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (!(qry->flags & QUERY_CACHED)) {
 		ret = validate_records(req, pkt, req->rplan.pool, has_nsec3);
 		if (ret != 0) {
+			/* something exepctional - no DNS key, empty pointers etc
+			 * normally it shoudn't happen */
 			DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 			return KNOT_STATE_FAIL;
+		}
+		/* check validation state and spawn subrequests */
+		ret = check_validation_result(req, &req->answ_selected);
+		if (ret != KNOT_STATE_DONE) {
+			return ret;
+		}
+		ret = check_validation_result(req, &req->auth_selected);
+		if (ret != KNOT_STATE_DONE) {
+			return ret;
 		}
 	}
 

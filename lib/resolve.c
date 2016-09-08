@@ -41,9 +41,9 @@ static void set_yield(ranked_rr_array_t *array, uint8_t rank)
 {
 	for (unsigned i = 0; i < array->len; ++i) {
 		ranked_rr_array_entry_t *entry = array->at[i];
-		if (entry->rank == rank) {
+//		if (entry->rank == rank) {
 			entry->yielded = true;
-		}
+//		}
 	}
 }
 
