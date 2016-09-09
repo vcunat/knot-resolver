@@ -420,6 +420,7 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 		ranked_rr_array_entry_t *stashed = array->at[i];
 		if (stashed->rank == rank &&
 		    stashed->cached == false &&
+		    stashed->yielded == false &&
 		    stashed->to_wire == to_wire &&
 		    stashed->rr->rclass == rr->rclass &&
 		    stashed->rr->type == rr->type &&
