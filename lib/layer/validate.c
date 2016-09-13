@@ -110,12 +110,19 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 		if (rr->type == KNOT_RRTYPE_RRSIG) {
 			continue;
 		}
-		if ((rr->type == KNOT_RRTYPE_NS) && (vctx->section_id == KNOT_AUTHORITY)) {
-			continue;
-		}
-		/* Only validate answers from current cut, records above the cut are stripped. */
-		if (!knot_dname_in(vctx->zone_name, rr->owner)) {
-			continue;
+
+		if (vctx->section_id == KNOT_AUTHORITY) {
+			if (rr->type == KNOT_RRTYPE_NS) {
+				continue;
+			}
+#ifndef STRICT_MODE
+			/* Workaround: ignore out-of-bailiwick NSs for authoritative answers,
+			 * but not for referrals. */
+			if (!knot_dname_in(vctx->zone_name, rr->owner) &&
+			    knot_pkt_section(vctx->pkt, KNOT_ANSWER)->count != 0) {
+				continue;
+			}
+#endif
 		}
 		ret = kr_rrmap_add(&stash, rr, 0, pool);
 		if (ret != 0) {
@@ -382,6 +389,10 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Pass-through if user doesn't want secure answer or stub. */
 	/* @todo: Validating stub resolver mode. */
 	if (!(qry->flags & QUERY_DNSSEC_WANT) || (qry->flags & QUERY_STUB)) {
+		return ctx->state;
+	}
+	/* Pass-through if CD bit is set. */
+	if (knot_wire_get_cd(req->answer->wire)) {
 		return ctx->state;
 	}
 	/* Answer for RRSIG may not set DO=1, but all records MUST still validate. */

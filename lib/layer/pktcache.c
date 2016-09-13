@@ -198,6 +198,10 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (!qname) {
 		return ctx->state;
 	}
+	if (knot_pkt_has_dnssec(req->answer) && knot_wire_get_cd(req->answer->wire)) {
+		return ctx->state;
+	}
+
 	knot_db_val_t data = { pkt->wire, pkt->size };
 	struct kr_cache_entry header = {
 		.timestamp = qry->timestamp.tv_sec,

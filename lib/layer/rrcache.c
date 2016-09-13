@@ -338,6 +338,9 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (qry->flags & QUERY_CACHED || knot_wire_get_rcode(pkt->wire) != KNOT_RCODE_NOERROR || !is_eligible) {
 		return ctx->state;
 	}
+	if (knot_pkt_has_dnssec(req->answer) && knot_wire_get_cd(req->answer->wire)) {
+		return ctx->state;
+	}
 	/* Stash in-bailiwick data from the AUTHORITY and ANSWER. */
 	map_t stash = map_make();
 	stash.malloc = (map_alloc_f) mm_alloc;
