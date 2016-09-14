@@ -119,7 +119,7 @@ static int pktcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 	struct kr_cache *cache = &req->ctx->cache;
 	int ret = loot_pktcache(cache, pkt, qry, &flags);
 	if (ret == 0) {
-		DEBUG_MSG(qry, "=> satisfied from cache\n");
+		DEBUG_MSG(qry, "=> satisfied from cache (pktcache)\n");
 		qry->flags |= QUERY_CACHED|QUERY_NO_MINIMIZE;
 		if (flags & KR_CACHE_FLAG_WCARD_PROOF) {
 			qry->flags |= QUERY_DNSSEC_WEXPAND;

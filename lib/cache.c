@@ -326,7 +326,8 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
 	return found->rank;
 }
 
-int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t drift, knot_mm_t *mm)
+int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t drift,
+		uint reorder, knot_mm_t *mm)
 {
 	if (!dst || !src || dst == src) {
 		return kr_error(EINVAL);
@@ -339,17 +340,34 @@ int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t dr
 		return kr_error(ENOMEM);
 	}
 
-	/* Copy valid records */
+	/* Find valid records */
+	knot_rdata_t *valid[src->rrs.rr_count];
+	int valid_count = 0;
 	knot_rdata_t *rd = src->rrs.data;
-	for (uint16_t i = 0; i < src->rrs.rr_count; ++i) {
+	for (int i = 0; i < src->rrs.rr_count; ++i) {
 		if (knot_rdata_ttl(rd) >= drift) {
-			if (knot_rdataset_add(&dst->rrs, rd, mm) != 0) {
-				knot_rrset_clear(dst, mm);
-				return kr_error(ENOMEM);
-			}
+			valid[valid_count++] = rd;
 		}
 		rd = kr_rdataset_next(rd);
 	}
+
+	knot_rdata_t **valid_ord;
+	knot_rdata_t *valid_rot[valid_count]; /* Valid array rotated left by `shift` */
+	if (reorder) {
+		valid_ord = valid_rot;
+		int shift = reorder % valid_count;
+		memcpy(valid_rot, valid + shift, sizeof(*valid) * (valid_count - shift));
+		memcpy(valid_rot + valid_count - shift, valid, sizeof(*valid) * shift);
+	} else {
+		valid_ord = valid;
+	}
+
+	int err = knot_rdataset_gather(&dst->rrs, valid_ord, valid_count, mm);
+	if (err) {
+		knot_rrset_clear(dst, mm);
+		return kr_error(err);
+	}
+
 	/* Fixup TTL by time passed */
 	rd = dst->rrs.data;
 	for (uint16_t i = 0; i < dst->rrs.rr_count; ++i) {
