@@ -52,6 +52,7 @@ struct kr_rrset_validation_ctx {
 	uint32_t timestamp;		/*!< Validation time. */
         bool has_nsec3;			/*!< Whether to use NSEC3 validation. */
 	uint32_t flags;			/*!< Output - Flags. */
+	const knot_rrset_t *rr;		/*!< Output - Problematic rrset, if set. */
 	int result;			/*!< Output - 0 or error code. */
 };
 

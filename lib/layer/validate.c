@@ -78,11 +78,20 @@ static int validate_rrset(const char *key, void *val, void *data)
 {
 	knot_rrset_t *rr = val;
 	kr_rrset_validation_ctx_t *vctx = data;
-	if (vctx->result != 0) {
+	/* kr_error(ENOENT) means no RRSIGs were found
+	 * it may be OK, don't fail immediately */
+	if (vctx->result != 0 && vctx->result != kr_error(ENOENT)) {
 		return vctx->result;
 	}
-
-	return kr_rrset_validate(vctx, rr);
+	int ret = kr_rrset_validate(vctx, rr);
+	if (vctx->result == kr_error(EFAULT)) {
+		/* validation fails, save the pointer */
+		vctx->rr = rr;
+	} else if (vctx->result != 0 && !vctx->rr) {
+		/* first time no RRSIGs were found */
+		vctx->rr = rr;
+	}
+	return ret;
 }
 
 static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
@@ -145,7 +154,8 @@ fail:
 	return ret;
 }
 
-static int validate_records(struct kr_query *qry, knot_pkt_t *answer, knot_mm_t *pool, bool has_nsec3)
+static int validate_records(struct kr_query *qry, knot_pkt_t *answer, knot_mm_t *pool,
+			    bool has_nsec3, const knot_rrset_t **rr)
 {
 	if (!qry->zone_cut.key) {
 		DEBUG_MSG(qry, "<= no DNSKEY, can't validate\n");
@@ -159,12 +169,16 @@ static int validate_records(struct kr_query *qry, knot_pkt_t *answer, knot_mm_t 
 		.zone_name	= qry->zone_cut.name,
 		.timestamp	= qry->timestamp.tv_sec,
 		.has_nsec3	= has_nsec3,
+		.rr		= NULL,
 		.flags		= 0,
 		.result		= 0
 	};
 
 	int ret = validate_section(&vctx, pool);
 	if (ret != 0) {
+		if (rr) {
+			*rr = vctx.rr;
+		}
 		return ret;
 	}
 
@@ -172,11 +186,15 @@ static int validate_records(struct kr_query *qry, knot_pkt_t *answer, knot_mm_t 
 	vctx.section_id   = KNOT_AUTHORITY;
 	/* zone_name can be changed by validate_section(), restore it */
 	vctx.zone_name	  = qry->zone_cut.name;
+	vctx.rr		  = NULL,
 	vctx.flags	  = 0;
 	vctx.result	  = 0;
 
 	ret = validate_section(&vctx, pool);
 	if (ret != 0) {
+		if (rr) {
+			*rr = vctx.rr;
+		}
 		return ret;
 	}
 
@@ -493,8 +511,57 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Validate all records, fail as bogus if it doesn't match.
 	 * Do not revalidate data from cache, as it's already trusted. */
 	if (!(qry->flags & QUERY_CACHED)) {
-		ret = validate_records(qry, pkt, req->rplan.pool, has_nsec3);
-		if (ret != 0) {
+		const knot_rrset_t *rr = NULL;
+		ret = validate_records(qry, pkt, req->rplan.pool, has_nsec3, &rr);
+		if (ret == kr_error(ENOENT)) {
+			/* No RRSIGs found. */
+			if (knot_dname_is_equal(rr->owner, qry->zone_cut.name)) {
+				DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
+				qry->flags |= QUERY_DNSSEC_BOGUS;
+				return KNOT_STATE_FAIL;
+			}
+			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+			int owner_labels = knot_dname_labels(rr->owner, NULL);
+			int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
+			int skip_labels = owner_labels - matched_labels - 1;
+			const knot_dname_t *new_cut_name_start = rr->owner;
+			while (skip_labels--) {
+				new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
+			}
+			struct kr_zonecut *cut = &qry->zone_cut;
+			if (knot_dname_is_sub(new_cut_name_start, qry->zone_cut.name)) {
+				/* Remember parent cut and descend to new (keep keys and TA). */
+				struct kr_zonecut *parent = mm_alloc(&req->pool, sizeof(*parent));
+				if (parent) {
+					memcpy(parent, cut, sizeof(*parent));
+					kr_zonecut_init(cut, new_cut_name_start, &req->pool);
+					cut->key = parent->key;
+					cut->trust_anchor = parent->trust_anchor;
+					cut->parent = parent;
+				} else {
+					kr_zonecut_set(cut, new_cut_name_start);
+				}
+				qry->flags |= QUERY_AWAIT_CUT;
+			} else {
+				/* try to find the name wanted among ancestors */
+				bool cut_found = false;
+				do {
+					cut = cut->parent;
+					if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
+						cut_found = true;
+						memcpy(&qry->zone_cut, cut, sizeof(qry->zone_cut));
+						break;
+					}
+				} while (cut->parent);
+				if (cut_found) {
+					qry->zone_cut.name = knot_dname_copy(new_cut_name_start, &req->pool);
+				} else {
+					kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
+					qry->flags |= QUERY_AWAIT_CUT;
+				}
+			}
+			return KNOT_STATE_YIELD;
+		} else if (ret != 0) {
 			DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 			return KNOT_STATE_FAIL;

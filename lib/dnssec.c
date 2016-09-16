@@ -158,6 +158,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 	const knot_dname_t *zone_name = vctx->zone_name;
 	uint32_t timestamp            = vctx->timestamp;
 	bool has_nsec3		      = vctx->has_nsec3;
+	bool owner_type_matched	      = false;
 	struct dseckey *created_key = NULL;
 	if (key == NULL) {
 		const knot_rdata_t *krr = knot_rdataset_at(&keys->rrs, key_pos);
@@ -192,6 +193,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 			if (knot_rrsig_type_covered(&rrsig->rrs, j) != covered->type) {
 				continue;
 			}
+			owner_type_matched = true;
 			if (validate_rrsig_rr(&val_flgs, covered_labels, rrsig, j,
 			                      keys, key_pos, keytag,
 			                      zone_name, timestamp) != 0) {
@@ -226,7 +228,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 	}
 	/* No applicable key found, cannot be validated. */
 	kr_dnssec_key_free(&created_key);
-	vctx->result = kr_error(ENOENT);
+	vctx->result = owner_type_matched ? kr_error(EFAULT) : kr_error(ENOENT);
 	return vctx->result;
 }
 
