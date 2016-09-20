@@ -131,10 +131,12 @@ static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name, uin
 	return name_len + KEY_HSIZE;
 }
 
-static struct kr_cache_entry *lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type)
+static void lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+		   uint16_t type, struct kr_cache_entry *entry)
 {
+	assert(entry);
 	if (!name || !cache) {
-		return NULL;
+		goto fail;
 	}
 
 	uint8_t keybuf[KEY_SIZE];
@@ -145,10 +147,15 @@ static struct kr_cache_entry *lookup(struct kr_cache *cache, uint8_t tag, const 
 	knot_db_val_t val = { NULL, 0 };
 	int ret = cache_op(cache, read, &key, &val, 1);
 	if (ret != 0) {
-		return NULL;
+		goto fail;
 	}
+	static const size_t header_size =
+		offsetof(kr_cache_entry, flags) + sizeof(entry->flags);
+	memcpy(entry, val.data, header_size);
 
 	return (struct kr_cache_entry *)val.data;
+fail:
+	entry->data = NULL;
 }
 
 static int check_lifetime(struct kr_cache_entry *found, uint32_t *timestamp)
@@ -172,7 +179,7 @@ static int check_lifetime(struct kr_cache_entry *found, uint32_t *timestamp)
 }
 
 int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                  struct kr_cache_entry **entry, uint32_t *timestamp)
+                  struct kr_cache_entry *entry, uint32_t *timestamp)
 {
 	if (!cache_isvalid(cache) || !name || !entry) {
 		return kr_error(EINVAL);
@@ -185,10 +192,10 @@ int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
 	}
 
 	/* Check entry lifetime */
-	*entry = found;
 	int ret = check_lifetime(found, timestamp);
 	if (ret == 0) {
 		cache->stats.hit += 1;
+		*entry = *found;
 	} else {
 		cache->stats.miss += 1;
 	}

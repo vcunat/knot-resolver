@@ -63,7 +63,7 @@ struct kr_cache_entry
 	uint16_t count;
 	uint8_t  rank;
 	uint8_t  flags;
-	uint8_t  data[];
+	uint8_t  *data;
 };
 
 /**
@@ -108,7 +108,7 @@ KR_EXPORT
 void kr_cache_sync(struct kr_cache *cache);
 
 /**
- * Return true if cache is open and enabled.
+ * Return true if cache is open and enabled.header 
  */
 static inline bool kr_cache_is_open(struct kr_cache *cache)
 {
@@ -117,34 +117,35 @@ static inline bool kr_cache_is_open(struct kr_cache *cache)
 
 /**
  * Peek the cache for asset (name, type, tag)
- * @note The 'drift' is the time passed between the inception time and now (in seconds).
+ *
  * @param cache cache structure
  * @param tag  asset tag
  * @param name asset name
  * @param type asset type
- * @param entry cache entry, will be set to valid pointer or NULL
- * @param timestamp current time (will be replaced with drift if successful)
+ * @param entry cache entry to fill
+ * @param timestamp current time. It will be replaced with drift if successful;
+ *	Note: drift is the number of seconds passed between inception and now.
  * @return 0 or an errcode
  */
 KR_EXPORT
 int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                  struct kr_cache_entry **entry, uint32_t *timestamp);
+                  struct kr_cache_entry *entry, uint32_t *timestamp);
 
 
 
 /**
  * Insert asset into cache, replacing any existing data.
+ *
  * @param cache cache structure
  * @param tag  asset tag
  * @param name asset name
  * @param type asset type
- * @param header filled entry header (count, ttl and timestamp)
- * @param data inserted data
+ * @param entry the whole entry to store
  * @return 0 or an errcode
  */
 KR_EXPORT
 int kr_cache_insert(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                    struct kr_cache_entry *header, knot_db_val_t data);
+                    struct kr_cache_entry *entry);
 
 /**
  * Remove asset from cache.
