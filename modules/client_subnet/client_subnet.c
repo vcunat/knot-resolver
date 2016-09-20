@@ -2,9 +2,9 @@
 #include <arpa/inet.h>
 
 #include <maxminddb.h>
-#include <libknot/rrtype/opt.h>
 #include <libknot/descriptor.h>
 
+#include "lib/client_subnet.h"
 #include "lib/module.h"
 #include "lib/layer/iterate.h"
 #include "lib/resolve.h"
@@ -13,19 +13,7 @@
 
 #define MSG(type, fmt...) kr_log_##type ("[module client subnet]: " fmt)
 
-/*! Data for ECS handling, to reside in struct kr_query::client_subnet.
- *
- * A (data_t *)NULL means that no ECS should be done nor answered. */
-typedef struct kr_client_subnet {
-	/*! ECS data; for request, ANS query (except scope_len), and answer. */
-	knot_edns_client_subnet_t query_ecs;
-	bool is_explicit; /*!< ECS was requested by client. */
-	/*! The location identifier string.
-	 *
-	 * It's "0" for explicit /0, and "" for no ECS with /0 scope (like TLD). */
-	char loc[2];
-	uint8_t loc_len; /*!< The length of loc. */
-} data_t;
+typedef struct kr_client_subnet data_t;
 
 /** Fill kr_query::client_subnet appropriately (a data_t instance). */
 static int begin(knot_layer_t *ctx, void *module_param)
@@ -40,14 +28,14 @@ static int begin(knot_layer_t *ctx, void *module_param)
 
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
-	assert(!qry->parent && !qry->client_subnet);
+	assert(!qry->parent && !qry->ecs);
 	//kr_log_info("[module client_subnet]: qry %s\n", qry->sname);
 
 	if (qry->sclass != KNOT_CLASS_IN)
 		return kr_ok();
 
 	data_t *data = mm_alloc(&req->pool, sizeof(data_t));
-	qry->client_subnet = data;
+	qry->ecs = data;
 
 	/* TODO: the RFC requires in 12.1 that we should avoid ECS on public suffixes
 	 * https://publicsuffix.org but we only check very roughly (number of labels).
@@ -58,22 +46,22 @@ static int begin(knot_layer_t *ctx, void *module_param)
 	}
 
 	/* Determine ecs_addr: the address to look up in DB. */
-	const struct sockaddr *ecs_addr = NULL; /* the address to look up in the DB */
+	const struct sockaddr *ecs_addr = NULL;
 	struct sockaddr_storage ecs_addr_storage;
        	uint8_t *ecs_wire = req->qsource.opt == NULL ? NULL :
 		knot_edns_get_option(req->qsource.opt, KNOT_EDNS_OPTION_CLIENT_SUBNET);
 	data->is_explicit = ecs_wire != NULL; /* explicit ECS request */
 	if (data->is_explicit) {
 		uint8_t *ecs_data = knot_edns_opt_get_data(ecs_wire);
-		uint16_t ecs_size = knot_edns_opt_get_length(ecs_wire);
-		int err = knot_edns_client_subnet_parse(&data->query_ecs, ecs_data, ecs_size);
+		uint16_t ecs_len = knot_edns_opt_get_length(ecs_wire);
+		int err = knot_edns_client_subnet_parse(&data->query_ecs, ecs_data, ecs_len);
 		if (err == KNOT_EOK)
 			err = knot_edns_client_subnet_get_addr(&ecs_addr_storage, &data->query_ecs);
 		if (err != KNOT_EOK || data->query_ecs.scope_len != 0) {
 			MSG(debug, "request with malformed client subnet or family\n");
 			knot_wire_set_rcode(req->answer->wire, KNOT_RCODE_FORMERR);
-			qry->client_subnet = NULL;
-			free(data);
+			qry->ecs = NULL;
+			mm_free(&req->pool, data);
 			return KNOT_STATE_FAIL | KNOT_STATE_DONE;
 		}
 		ecs_addr = (struct sockaddr *)&ecs_addr_storage;
@@ -110,7 +98,8 @@ static int begin(knot_layer_t *ctx, void *module_param)
 	/* Esure data->query_ecs contains correct address, source_len, and also
 	 * scope_len for answer. We take the prefix lengths from the database. */
 	if (!data->is_explicit) {
-		knot_edns_client_subnet_set_addr(data->query_ecs, ecs_addr);
+		knot_edns_client_subnet_set_addr(&data->query_ecs,
+						 (struct sockaddr_storage *)ecs_addr);
 			/* ^ not very efficient way but should be OK */
 		data->query_ecs.source_len = lookup_result.netmask;
 	}
@@ -120,8 +109,8 @@ static int begin(knot_layer_t *ctx, void *module_param)
 
 err_db:
 	MSG(error, "GEO DB failure: %s\n", MMDB_strerror(err));
-	qry->client_subnet = NULL;
-	free(data);
+	qry->ecs = NULL;
+	mm_free(&req->pool, data);
 	return kr_ok(); /* Go without ECS. */
 
 err_not_found:;
@@ -132,12 +121,12 @@ err_not_found:;
 		addr_str[0] = '\0';
 	}
 	MSG(debug, "location of client's address not found: '%s'\n", addr_str);
-	qry->client_subnet = NULL;
-	free(data);
+	qry->ecs = NULL;
+	mm_free(&req->pool, data);
 	return kr_ok(); /* Go without ECS. */
 
 #if 0
-	assert(!qry->client_subnet);
+	assert(!qry->ecs);
 	/* Only consider ECS for original request, not sub-queries. */
 	if (qry->parent)
 		return ctx->state;
@@ -151,6 +140,8 @@ err_not_found:;
 	return ctx->state;
 #endif
 }
+
+
 
 /* Only uninteresting stuff till the end of the file. */
 

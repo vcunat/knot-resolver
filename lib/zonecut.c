@@ -304,7 +304,7 @@ static void fetch_addr(struct kr_zonecut *cut, struct kr_cache *cache, const kno
 	uint8_t rank = 0;
 	knot_rrset_t cached_rr;
 	knot_rrset_init(&cached_rr, (knot_dname_t *)ns, rrtype, KNOT_CLASS_IN);
-	if (kr_cache_peek_rr(cache, &cached_rr, &rank, NULL, &timestamp) != 0) {
+	if (kr_cache_peek_rr(cache, &cached_rr, &rank, NULL, &timestamp, NULL) != 0) {
 		return;
 	}
 
@@ -323,7 +323,7 @@ static int fetch_ns(struct kr_context *ctx, struct kr_zonecut *cut, const knot_d
 	uint32_t drift = timestamp;
 	knot_rrset_t cached_rr;
 	knot_rrset_init(&cached_rr, (knot_dname_t *)name, KNOT_RRTYPE_NS, KNOT_CLASS_IN);
-	int ret = kr_cache_peek_rr(&ctx->cache, &cached_rr, rank, NULL, &drift);
+	int ret = kr_cache_peek_rr(&ctx->cache, &cached_rr, rank, NULL, &drift, NULL);
 	if (ret != 0) {
 		return ret;
 	}
@@ -369,7 +369,7 @@ static int fetch_rrset(knot_rrset_t **rr, struct kr_cache *cache,
 	uint32_t drift = timestamp;
 	knot_rrset_t cached_rr;
 	knot_rrset_init(&cached_rr, (knot_dname_t *)owner, type, KNOT_CLASS_IN);
-	int ret = kr_cache_peek_rr(cache, &cached_rr, &rank, NULL, &drift);
+	int ret = kr_cache_peek_rr(cache, &cached_rr, &rank, NULL, &drift, NULL);
 	if (ret != 0) {
 		return ret;
 	}

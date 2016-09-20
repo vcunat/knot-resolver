@@ -27,19 +27,27 @@
 
 #include "contrib/cleanup.h"
 #include "lib/cache.h"
+#include "lib/client_subnet.h"
 #include "lib/cdb_lmdb.h"
 #include "lib/defines.h"
 #include "lib/utils.h"
 
-/* Cache version */
-#define KEY_VERSION "V\x02"
-/* Key size */
-#define KEY_HSIZE (sizeof(uint8_t) + sizeof(uint16_t))
-#define KEY_SIZE (KEY_HSIZE + KNOT_DNAME_MAXLEN)
+/** Cache version */
+#define KEY_VERSION "V\x03"
+/** An upper bound on the cache key length; see cache_key() */
+#define KEY_SIZE (KNOT_DNAME_MAXLEN + 3 * sizeof(uint8_t) + 2 * sizeof(uint16_t))
 
 /* Shorthand for operations on cache backend */
 #define cache_isvalid(cache) ((cache) && (cache)->api && (cache)->db)
 #define cache_op(cache, op, ...) (cache)->api->op((cache)->db, ## __VA_ARGS__)
+
+/** Beware of alignment with struct kr_cache_entry. */
+typedef struct kr_cache_entry_short {
+	uint32_t timestamp;
+	uint32_t ttl;
+	uint16_t hash;
+} entry_short_t;
+
 
 /** @internal Removes all records from cache. */
 static inline int cache_purge(struct kr_cache *cache)
@@ -113,11 +121,13 @@ void kr_cache_sync(struct kr_cache *cache)
 }
 
 /**
- * @internal Composed key as { u8 tag, u8[1-255] name, u16 type }
+ * @internal Composed key as { u8 tag, u8[1-255] name, u16 type,
+ * either (u8[0-2] location) or (u8 '\0' and u16 hash) }
  * The name is lowercased and label order is reverted for easy prefix search.
- * e.g. '\x03nic\x02cz\x00' is saved as '\0x00cz\x00nic\x00'
+ * e.g. '\x03nic\x02cz\x00' is saved as 'cz\x00nic\x00'
  */
-static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name, uint16_t rrtype)
+static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name,
+			uint16_t rrtype, struct kr_client_subnet *ecs, int32_t ecs_lkey)
 {
 	/* Convert to lookup format */
 	int ret = knot_dname_lf(buf, name, NULL);
@@ -127,25 +137,50 @@ static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name, uin
 	/* Write tag + type */
 	uint8_t name_len = buf[0];
 	buf[0] = tag;
-	memcpy(buf + sizeof(uint8_t) + name_len, &rrtype, sizeof(uint16_t));
-	return name_len + KEY_HSIZE;
+	uint8_t *buf_now = buf + sizeof(uint8_t) + name_len;
+	memcpy(buf_now, &rrtype, sizeof(uint16_t));
+	buf_now += sizeof(uint16_t);
+	if (ecs != NULL && ecs_lkey < 0) {
+		memcpy(buf_now, ecs->loc, ecs->loc_len);
+		buf_now += ecs->loc_len;
+	}
+	if (ecs_lkey >= 0) {
+		uint16_t lkey = ecs_lkey;
+		assert(lkey == ecs_lkey);
+		*(buf_now++) = '\0';
+		memcpy(buf_now, &lkey, sizeof(lkey));
+		buf_now += sizeof(lkey);
+	}
+	assert(buf_now - buf <= KEY_SIZE);
+	return buf_now - buf;
 }
 
-static struct kr_cache_entry *lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type)
+static struct kr_cache_entry *
+lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+	uint16_t type, struct kr_client_subnet *ecs)
 {
 	if (!name || !cache) {
 		return NULL;
 	}
 
 	uint8_t keybuf[KEY_SIZE];
-	size_t key_len = cache_key(keybuf, tag, name, type);
+	size_t key_len = cache_key(keybuf, tag, name, type, ecs, -1);
 
 	/* Look up and return value */
 	knot_db_val_t key = { keybuf, key_len };
 	knot_db_val_t val = { NULL, 0 };
 	int ret = cache_op(cache, read, &key, &val, 1);
-	if (ret != 0) {
-		return NULL;
+
+	if (ecs == NULL) {
+		/* The non-ECS format is used. */
+		if (ret != 0 || val.len < sizeof(struct kr_cache_entry)) {
+			return NULL;
+		}
+		return (struct kr_cache_entry *)val.data;
+	}
+	assert(ecs->loc_len > 0);
+	if (ret == 0 && val.len == sizeof(entry_short_t)) { /* ignore bogus sizes */
+		entry_short_t *es = val.data;
 	}
 
 	return (struct kr_cache_entry *)val.data;
@@ -172,7 +207,7 @@ static int check_lifetime(struct kr_cache_entry *found, uint32_t *timestamp)
 }
 
 int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                  struct kr_cache_entry **entry, uint32_t *timestamp)
+                  struct kr_cache_entry **entry, uint32_t *timestamp, struct kr_client_subnet *ecs)
 {
 	if (!cache_isvalid(cache) || !name || !entry) {
 		return kr_error(EINVAL);
@@ -288,7 +323,8 @@ int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name
 	return cache_op(cache, match, &key, val, maxcount);
 }
 
-int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank, uint8_t *flags, uint32_t *timestamp)
+int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank,
+		     uint8_t *flags, uint32_t *timestamp, struct kr_client_subnet *ecs)
 {
 	if (!cache_isvalid(cache) || !rr || !timestamp) {
 		return kr_error(EINVAL);
@@ -296,7 +332,7 @@ int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank, ui
 
 	/* Check if the RRSet is in the cache. */
 	struct kr_cache_entry *entry = NULL;
-	int ret = kr_cache_peek(cache, KR_CACHE_RR, rr->owner, rr->type, &entry, timestamp);
+	int ret = kr_cache_peek(cache, KR_CACHE_RR, rr->owner, rr->type, &entry, timestamp, ecs);
 	if (ret != 0) {
 		return ret;
 	}

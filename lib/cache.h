@@ -20,6 +20,8 @@
 #include "lib/cdb.h"
 #include "lib/defines.h"
 
+struct kr_client_subnet; // TODO
+
 /** Cache entry tag */
 enum kr_cache_tag {
 	KR_CACHE_RR   = 'R',
@@ -50,6 +52,7 @@ enum kr_cache_flag {
 	KR_CACHE_FLAG_WCARD_PROOF = 1, /* Entry contains either packet with wildcard
 	                                * answer either record for which wildcard
 	                                * expansion proof is needed */
+	KR_CACHE_FLAG_ECS_SCOPE0 = 2,
 };
 
 
@@ -61,10 +64,22 @@ struct kr_cache_entry
 	uint32_t timestamp;
 	uint32_t ttl;
 	uint16_t count;
-	uint8_t  rank;
-	uint8_t  flags;
+	uint8_t  rank; /*!< See enum kr_cache_rank. */
+	uint8_t  flags; /*!< Or-combination of enum kr_cache_flag. */
 	uint8_t  data[];
 };
+#if 0
+  ECS short entry (1):
+	uint32_t timestamp;
+	uint32_t ttl;
+	uint16_t hash;
+
+  ECS short entry (2):
+	uint16_t count;
+	uint8_t  rank; /*!< See enum kr_cache_rank. */
+	uint8_t  flags; /*!< Or-combination of enum kr_cache_flag. */
+	uint8_t  data[];
+#endif
 
 /**
  * Cache structure, keeps API, instance and metadata.
@@ -128,7 +143,7 @@ static inline bool kr_cache_is_open(struct kr_cache *cache)
  */
 KR_EXPORT
 int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                  struct kr_cache_entry **entry, uint32_t *timestamp);
+                  struct kr_cache_entry **entry, uint32_t *timestamp, struct kr_client_subnet *ecs);
 
 
 
@@ -200,7 +215,8 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank, uint8_t *flags, uint32_t *timestamp);
+int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank,
+		     uint8_t *flags, uint32_t *timestamp, struct kr_client_subnet *ecs);
 
 /**
  * Clone read-only RRSet and adjust TTLs.
