@@ -62,24 +62,12 @@ enum kr_cache_flag {
 struct kr_cache_entry
 {
 	uint32_t timestamp;
-	uint32_t ttl;
-	uint16_t count;
-	uint8_t  rank; /*!< See enum kr_cache_rank. */
+	uint32_t ttl;   /*!< Time to live in seconds, at storage time. */
+	uint16_t count; /*!< Length of data. */
+	uint8_t  rank;  /*!< See enum kr_cache_rank. */
 	uint8_t  flags; /*!< Or-combination of enum kr_cache_flag. */
-	uint8_t  data[];
+	uint8_t *data;  /*!< The actual RRset data in wire format. */
 };
-#if 0
-  ECS short entry (1):
-	uint32_t timestamp;
-	uint32_t ttl;
-	uint16_t hash;
-
-  ECS short entry (2):
-	uint16_t count;
-	uint8_t  rank; /*!< See enum kr_cache_rank. */
-	uint8_t  flags; /*!< Or-combination of enum kr_cache_flag. */
-	uint8_t  data[];
-#endif
 
 /**
  * Cache structure, keeps API, instance and metadata.
@@ -132,34 +120,52 @@ static inline bool kr_cache_is_open(struct kr_cache *cache)
 
 /**
  * Peek the cache for asset (name, type, tag)
- * @note The 'drift' is the time passed between the inception time and now (in seconds).
+ *
  * @param cache cache structure
  * @param tag  asset tag
  * @param name asset name
  * @param type asset type
- * @param entry cache entry, will be set to valid pointer or NULL
- * @param timestamp current time (will be replaced with drift if successful)
+ * @param ecs client subnet specification (can be NULL)
+ * @param timestamp current time. It will be replaced with drift if successful;
+ *     Note: drift is the number of seconds passed between inception and now.
+ * @param entry cache entry to fill
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                  struct kr_cache_entry **entry, uint32_t *timestamp, struct kr_client_subnet *ecs);
+int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+		  uint16_t type, struct kr_client_subnet *ecs, uint32_t *timestamp,
+		  struct kr_cache_entry *entry);
 
-
+/**
+ * Peek the cache for given key and retrieve it's rank.
+ *
+ * @param cache cache structure
+ * @param tag asset tag
+ * @param name asset name
+ * @param type record type
+ * @param ecs client subnet specification (can be NULL)
+ * @param timestamp current time
+ * @return rank (0 or positive), or an error (negative number)
+ *
+ * @note It doesn't change the hit/miss statistics.
+ */
+KR_EXPORT
+int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+			uint16_t type, struct kr_client_subnet *ecs, uint32_t timestamp);
 
 /**
  * Insert asset into cache, replacing any existing data.
+ *
  * @param cache cache structure
  * @param tag  asset tag
  * @param name asset name
  * @param type asset type
- * @param header filled entry header (count, ttl and timestamp)
- * @param data inserted data
+ * @param entry the stuff to store
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_insert(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                    struct kr_cache_entry *header, knot_db_val_t data);
+int kr_cache_insert(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+		    uint16_t type, struct kr_cache_entry *entry);
 
 /**
  * Remove asset from cache.
@@ -191,18 +197,6 @@ int kr_cache_clear(struct kr_cache *cache);
  */
 KR_EXPORT
 int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, knot_db_val_t *vals, int valcnt);
-
-/**
- * Peek the cache for given key and retrieve it's rank.
- * @param cache cache structure
- * @param tag asset tag
- * @param name asset name
- * @param type record type
- * @param timestamp current time
- * @return rank (0 or positive), or an error (negative number)
- */
-KR_EXPORT
-int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type, uint32_t timestamp);
 
 /**
  * Peek the cache for given RRSet (name, type)

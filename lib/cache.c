@@ -41,12 +41,22 @@
 #define cache_isvalid(cache) ((cache) && (cache)->api && (cache)->db)
 #define cache_op(cache, op, ...) (cache)->api->op((cache)->db, ## __VA_ARGS__)
 
-/** Beware of alignment with struct kr_cache_entry. */
-typedef struct kr_cache_entry_short {
+
+/* Memory-mapped cache entries. See struct kr_cache_entry for field meanings. */
+
+typedef struct mmentry_normal {
 	uint32_t timestamp;
 	uint32_t ttl;
-	uint16_t hash;
-} entry_short_t;
+	uint8_t  rank;
+	uint8_t  flags;
+	uint8_t  data[];
+} mmentry_normal_t;
+
+typedef struct mmentry_short {
+	uint32_t timestamp;
+	uint32_t ttl;
+	uint16_t hash; /*!< Hash of contents of the rest of mmentry_normal_t. */
+} mmentry_short_t;
 
 
 /** @internal Removes all records from cache. */
@@ -155,41 +165,14 @@ static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name,
 	return buf_now - buf;
 }
 
-static struct kr_cache_entry *
-lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-	uint16_t type, struct kr_client_subnet *ecs)
+
+/** @internal Verify entry against a timestamp and replace timestamp by drift if OK;
+	uint32_t time_now = *timestamp;
+ *   return ESTALE otherwise. */
+static int check_lifetime(mmentry_short_t *found, uint32_t *timestamp)
 {
-	if (!name || !cache) {
-		return NULL;
-	}
-
-	uint8_t keybuf[KEY_SIZE];
-	size_t key_len = cache_key(keybuf, tag, name, type, ecs, -1);
-
-	/* Look up and return value */
-	knot_db_val_t key = { keybuf, key_len };
-	knot_db_val_t val = { NULL, 0 };
-	int ret = cache_op(cache, read, &key, &val, 1);
-
-	if (ecs == NULL) {
-		/* The non-ECS format is used. */
-		if (ret != 0 || val.len < sizeof(struct kr_cache_entry)) {
-			return NULL;
-		}
-		return (struct kr_cache_entry *)val.data;
-	}
-	assert(ecs->loc_len > 0);
-	if (ret == 0 && val.len == sizeof(entry_short_t)) { /* ignore bogus sizes */
-		entry_short_t *es = val.data;
-	}
-
-	return (struct kr_cache_entry *)val.data;
-}
-
-static int check_lifetime(struct kr_cache_entry *found, uint32_t *timestamp)
-{
-	/* No time constraint */
 	if (!timestamp) {
+		/* No time constraint. */
 		return kr_ok();
 	} else if (*timestamp <= found->timestamp) {
 		/* John Connor record cached in the future. */
@@ -206,32 +189,144 @@ static int check_lifetime(struct kr_cache_entry *found, uint32_t *timestamp)
 	return kr_error(ESTALE);
 }
 
-int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type,
-                  struct kr_cache_entry **entry, uint32_t *timestamp, struct kr_client_subnet *ecs)
+/** @internal Find a cache entry or eturn error code.
+ *   It includes timestamp checking, ECS handling, etc. */
+static int lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+	uint16_t type, struct kr_client_subnet *ecs, uint32_t *timestamp,
+	struct kr_cache_entry *entry)
 {
-	if (!cache_isvalid(cache) || !name || !entry) {
+	bool precond = name && cache && entry && (!ecs || ecs->loc_len > 0);
+	if (!precond) {
+		assert(false);
 		return kr_error(EINVAL);
 	}
 
-	struct kr_cache_entry *found = lookup(cache, tag, name, type);
-	if (!found) {
-		cache->stats.miss += 1;
-		return kr_error(ENOENT);
+	/* Prepare lookup and return value. */
+	uint8_t keybuf[KEY_SIZE];
+	knot_db_val_t key = {
+		.data = keybuf,
+		.len = cache_key(keybuf, tag, name, type, ecs, -1),
+	};
+	knot_db_val_t val = { NULL, 0 };
+
+	int ret = cache_op(cache, read, &key, &val, 1);
+
+	bool require_scope0 = false;
+	if (ecs == NULL) {
+	retry_without_ecs:
+		/* The non-ECS format is used. */
+		if (ret != 0) {
+			return kr_error(ENOENT);
+		}
+		if (val.len <= sizeof(mmentry_normal_t)) {
+			return kr_error(EILSEQ);
+		}
+		mmentry_normal_t *mme = val.data;
+		
+		if (require_scope0 && !(mme->flags & KR_CACHE_FLAG_ECS_SCOPE0)) {
+			return kr_error(ENOENT);
+		}
+
+		/* Only time can stop us now. */
+		ret = check_lifetime((mmentry_short_t *)mme, timestamp);
+		if (ret) {
+			return ret;
+		}
+		/* Deserialize *mme. */
+		*entry = (struct kr_cache_entry){
+			.timestamp	= mme->timestamp,
+			.ttl		= mme->ttl,
+			.count		= val.len - sizeof(mmentry_normal_t),
+			.rank		= mme->rank,
+			.flags		= mme->flags,
+			.data		= mme->data
+		};
+		return kr_ok();
+	}
+	/* We want ECS from now on. */
+
+	if (ret == 0 && val.len != sizeof(mmentry_short_t)) {
+		/* Bogus size found; continue as if not found, unless debugging. */
+		assert(false);
+		ret = kr_error(ENOENT);
+	}
+	mmentry_short_t *mmes = val.data;
+	uint32_t timestamp_orig = timestamp ? *timestamp : -1;
+	if (!ret) {
+		ret = check_lifetime(mmes, timestamp);
+	}
+	if (!ret) {
+		/* We have an OK short entry and timestamp has been updated already.
+		 * Let's try to find the rest of the entry. */
+		key.len = cache_key(keybuf, tag, name, type, ecs, mmes->hash);
+		ret = cache_op(cache, read, &key, &val, 1);
 	}
 
-	/* Check entry lifetime */
-	*entry = found;
-	int ret = check_lifetime(found, timestamp);
-	if (ret == 0) {
+	if (ret || val.len <= 2 ) {
+		assert(ret);
+		/* The search failed, at some point,
+		 * but we may still use the scope0 entry, if it exists. */
+		key.len = cache_key(keybuf, tag, name, type, NULL, -1);
+		ret = cache_op(cache, read, &key, &val, 1);
+		require_scope0 = true;
+		if (timestamp) { /* To be sure; maybe we haven't changed it. */
+			*timestamp = timestamp_orig;
+		}
+		goto retry_without_ecs;
+	}
+	
+	/* The rest of entry is OK, so fill the output. */
+	uint8_t *val_data = val.data; /* not perfect approach with this variable */
+	*entry = (struct kr_cache_entry){
+		.timestamp	= mmes->timestamp,
+		.ttl		= mmes->ttl,
+		.count		= val.len - 2,
+		.rank		= val_data[0],
+		.flags		= val_data[1],
+		.data		= val_data + 2
+	};
+	return kr_ok();
+}
+
+int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+		  uint16_t type, struct kr_client_subnet *ecs, uint32_t *timestamp,
+		  struct kr_cache_entry *entry)
+{
+	bool precond = cache_isvalid(cache) && name && entry;
+	if (!precond) {
+		assert(false);
+		return kr_error(EINVAL);
+	}
+
+	int err = lookup(cache, tag, name, type, ecs, timestamp, entry);
+	if (!err) {
 		cache->stats.hit += 1;
-	} else {
+	}
+       	if (err == kr_error(ENOENT) || err == kr_error(ESTALE)) {
 		cache->stats.miss += 1;
 	}
-	return ret;
+	return err;
 }
+
+int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+			uint16_t type, struct kr_client_subnet *ecs, uint32_t timestamp)
+{
+	bool precond = cache_isvalid(cache) && name;
+	if (!precond) {
+		assert(false);
+		return kr_error(EINVAL);
+	}
+
+	struct kr_cache_entry e;
+	int err = lookup(cache, tag, name, type, ecs, &timestamp, &e);
+	return err ? err : e.rank;
+}
+
 
 static void entry_write(struct kr_cache_entry *dst, struct kr_cache_entry *header, knot_db_val_t data)
 {
+	BARF;
+
 	memcpy(dst, header, sizeof(*header));
 	if (data.data)
 		memcpy(dst->data, data.data, data.len);
@@ -285,7 +380,7 @@ int kr_cache_remove(struct kr_cache *cache, uint8_t tag, const knot_dname_t *nam
 	size_t key_len = cache_key(keybuf, tag, name, type);
 	if (key_len == 0) {
 		return kr_error(EILSEQ);
-	}
+	}ret
 	knot_db_val_t key = { keybuf, key_len };
 	cache->stats.delete += 1;
 	return cache_op(cache, remove, &key, 1);
@@ -332,7 +427,8 @@ int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank,
 
 	/* Check if the RRSet is in the cache. */
 	struct kr_cache_entry *entry = NULL;
-	int ret = kr_cache_peek(cache, KR_CACHE_RR, rr->owner, rr->type, &entry, timestamp, ecs);
+	int ret = kr_cache_peek(cache, KR_CACHE_RR, rr->owner, rr->type,
+				&entry, timestamp, ecs);
 	if (ret != 0) {
 		return ret;
 	}
@@ -347,20 +443,6 @@ int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank,
 	return kr_ok();
 }
 
-int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type, uint32_t timestamp)
-{
-	if (!cache_isvalid(cache) || !name) {
-		return kr_error(EINVAL);
-	}
-	struct kr_cache_entry *found = lookup(cache, tag, name, type);
-	if (!found) {
-		return kr_error(ENOENT);
-	}
-	if (check_lifetime(found, &timestamp) != 0) {
-		return kr_error(ESTALE);
-	}
-	return found->rank;
-}
 
 int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t drift, knot_mm_t *mm)
 {
