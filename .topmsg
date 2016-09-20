@@ -1,0 +1,5 @@
+From: Vladimír Čunát <vladimir.cunat@nic.cz>
+Subject: [PATCH] t/kr_cache_entry
+
+Reworking kr_cache_entry and related API.
+
