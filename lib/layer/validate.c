@@ -438,10 +438,11 @@ static int rrsig_not_found(knot_layer_t *ctx, const knot_rrset_t *rr)
 				break;
 			}
 		};
+		kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
 		if (cut_found) {
 			kr_zonecut_copy(&qry->zone_cut, cut);
+			kr_zonecut_copy_trust(&qry->zone_cut, cut);
 		} else {
-			kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
 			qry->flags |= QUERY_AWAIT_CUT;
 		}
 	}
