@@ -394,6 +394,60 @@ static const knot_dname_t *signature_authority(knot_pkt_t *pkt)
 	return NULL;
 }
 
+static int rrsig_not_found(knot_layer_t *ctx, const knot_rrset_t *rr)
+{
+	struct kr_request *req = ctx->data;
+	struct kr_query *qry = req->current_query;
+
+	if (knot_dname_is_equal(rr->owner, qry->zone_cut.name) ||
+				ctx->state == KNOT_STATE_YIELD) {
+		/* Already yielded for revalidation. */
+		DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
+		qry->flags |= QUERY_DNSSEC_BOGUS;
+		return KNOT_STATE_FAIL;
+	}
+
+	DEBUG_MSG(qry, ">< no RRSIGs found\n");
+	int owner_labels = knot_dname_labels(rr->owner, NULL);
+	int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
+	int skip_labels = owner_labels - matched_labels - 1;
+	const knot_dname_t *new_cut_name_start = rr->owner;
+	while (skip_labels--) {
+		new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
+	}
+	struct kr_zonecut *cut = &qry->zone_cut;
+	if (knot_dname_is_sub(new_cut_name_start, qry->zone_cut.name)) {
+		struct kr_zonecut *parent = mm_alloc(&req->pool, sizeof(*parent));
+		if (parent) {
+			memcpy(parent, cut, sizeof(*parent));
+			kr_zonecut_init(cut, new_cut_name_start, &req->pool);
+			cut->key = parent->key;
+			cut->trust_anchor = parent->trust_anchor;
+			cut->parent = parent;
+		} else {
+			kr_zonecut_set(cut, new_cut_name_start);
+		}
+		qry->flags |= QUERY_AWAIT_CUT;
+	} else {
+		/* try to find the name wanted among ancestors */
+		bool cut_found = false;
+		while (cut->parent) {
+			cut = cut->parent;
+			if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
+				cut_found = true;
+				break;
+			}
+		};
+		if (cut_found) {
+			kr_zonecut_copy(&qry->zone_cut, cut);
+		} else {
+			kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
+			qry->flags |= QUERY_AWAIT_CUT;
+		}
+	}
+	return KNOT_STATE_YIELD;
+}
+
 static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 {
 	int ret = 0;
@@ -515,52 +569,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 		ret = validate_records(qry, pkt, req->rplan.pool, has_nsec3, &rr);
 		if (ret == kr_error(ENOENT)) {
 			/* No RRSIGs found. */
-			if (knot_dname_is_equal(rr->owner, qry->zone_cut.name)) {
-				DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
-				qry->flags |= QUERY_DNSSEC_BOGUS;
-				return KNOT_STATE_FAIL;
-			}
-			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
-			int owner_labels = knot_dname_labels(rr->owner, NULL);
-			int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
-			int skip_labels = owner_labels - matched_labels - 1;
-			const knot_dname_t *new_cut_name_start = rr->owner;
-			while (skip_labels--) {
-				new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
-			}
-			struct kr_zonecut *cut = &qry->zone_cut;
-			if (knot_dname_is_sub(new_cut_name_start, qry->zone_cut.name)) {
-				/* Remember parent cut and descend to new (keep keys and TA). */
-				struct kr_zonecut *parent = mm_alloc(&req->pool, sizeof(*parent));
-				if (parent) {
-					memcpy(parent, cut, sizeof(*parent));
-					kr_zonecut_init(cut, new_cut_name_start, &req->pool);
-					cut->key = parent->key;
-					cut->trust_anchor = parent->trust_anchor;
-					cut->parent = parent;
-				} else {
-					kr_zonecut_set(cut, new_cut_name_start);
-				}
-				qry->flags |= QUERY_AWAIT_CUT;
-			} else {
-				/* try to find the name wanted among ancestors */
-				bool cut_found = false;
-				do {
-					cut = cut->parent;
-					if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
-						cut_found = true;
-						memcpy(&qry->zone_cut, cut, sizeof(qry->zone_cut));
-						break;
-					}
-				} while (cut->parent);
-				if (cut_found) {
-					qry->zone_cut.name = knot_dname_copy(new_cut_name_start, &req->pool);
-				} else {
-					kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
-					qry->flags |= QUERY_AWAIT_CUT;
-				}
-			}
-			return KNOT_STATE_YIELD;
+			return rrsig_not_found(ctx, rr);
 		} else if (ret != 0) {
 			DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
