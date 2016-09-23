@@ -20,7 +20,7 @@
 #include "lib/cdb.h"
 #include "lib/defines.h"
 
-struct kr_client_subnet; // TODO
+typedef struct kr_ecs kr_ecs_t; // TODO
 
 /** Cache entry tag */
 enum kr_cache_tag {
@@ -50,7 +50,7 @@ enum kr_cache_rank {
 enum kr_cache_flag {
 	KR_CACHE_FLAG_NONE	      = 0,
 	KR_CACHE_FLAG_WCARD_PROOF = 1, /* Entry contains either packet with wildcard
-	                                * answer either record for which wildcard
+	                                * answer or record for which wildcard
 	                                * expansion proof is needed */
 	KR_CACHE_FLAG_ECS_SCOPE0 = 2,
 };
@@ -62,11 +62,12 @@ enum kr_cache_flag {
 struct kr_cache_entry
 {
 	uint32_t timestamp;
-	uint32_t ttl;   /*!< Time to live in seconds, at storage time. */
-	uint16_t count; /*!< Length of data. */
+	uint32_t ttl;   /*!< Time to live in seconds, at storage time. TODO: =0 for ins. */
 	uint8_t  rank;  /*!< See enum kr_cache_rank. */
 	uint8_t  flags; /*!< Or-combination of enum kr_cache_flag. */
-	uint8_t *data;  /*!< The actual RRset data in wire format. */
+	uint16_t data_len; /*!< The byte-length of data. */
+	void    *data;  /*!< Non-interpreted data. */
+	//knot_rdataset_t rrs; /*!< The resource records. FIXME: buggy references FIXME TODO */
 };
 
 /**
@@ -120,7 +121,6 @@ static inline bool kr_cache_is_open(struct kr_cache *cache)
 
 /**
  * Peek the cache for asset (name, type, tag)
- *
  * @param cache cache structure
  * @param tag  asset tag
  * @param name asset name
@@ -133,12 +133,11 @@ static inline bool kr_cache_is_open(struct kr_cache *cache)
  */
 KR_EXPORT
 int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-		  uint16_t type, struct kr_client_subnet *ecs, uint32_t *timestamp,
+		  uint16_t type, const kr_ecs_t *ecs, uint32_t *timestamp,
 		  struct kr_cache_entry *entry);
 
 /**
  * Peek the cache for given key and retrieve it's rank.
- *
  * @param cache cache structure
  * @param tag asset tag
  * @param name asset name
@@ -151,11 +150,10 @@ int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
  */
 KR_EXPORT
 int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-			uint16_t type, struct kr_client_subnet *ecs, uint32_t timestamp);
+			uint16_t type, const kr_ecs_t *ecs, uint32_t timestamp);
 
 /**
  * Insert asset into cache, replacing any existing data.
- *
  * @param cache cache structure
  * @param tag  asset tag
  * @param name asset name
@@ -164,8 +162,9 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_insert(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-		    uint16_t type, struct kr_cache_entry *entry);
+int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
+		    const knot_dname_t *name, uint16_t type,
+		    const struct kr_cache_entry *entry);
 
 /**
  * Remove asset from cache.
@@ -174,9 +173,12 @@ int kr_cache_insert(struct kr_cache *cache, uint8_t tag, const knot_dname_t *nam
  * @param name asset name
  * @param type record type
  * @return 0 or an errcode
+ *
+ * @note unused for now
  */
 KR_EXPORT
-int kr_cache_remove(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, uint16_t type);
+int kr_cache_remove(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
+		    uint16_t type, const kr_ecs_t *ecs);
 
 /**
  * Clear all items from the cache.
@@ -209,8 +211,10 @@ int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_peek_rr(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank,
-		     uint8_t *flags, uint32_t *timestamp, struct kr_client_subnet *ecs);
+int kr_cache_peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *rr,
+		     uint8_t *rank, uint8_t *flags, uint32_t *timestamp);
+
+// FIXME: review the order of ecs parameter - perhaps always the second?
 
 /**
  * Clone read-only RRSet and adjust TTLs.
@@ -233,7 +237,8 @@ int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t dr
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_insert_rr(struct kr_cache *cache, const knot_rrset_t *rr, uint8_t rank, uint8_t flags, uint32_t timestamp);
+int kr_cache_insert_rr(struct kr_cache *cache, const kr_ecs_t *ecs, const knot_rrset_t *rr,
+			uint8_t rank, uint8_t flags, uint32_t timestamp);
 
 /**
  * Peek the cache for the given RRset signature (name, type)
@@ -246,7 +251,8 @@ int kr_cache_insert_rr(struct kr_cache *cache, const knot_rrset_t *rr, uint8_t r
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_peek_rrsig(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank, uint8_t *flags, uint32_t *timestamp);
+int kr_cache_peek_rrsig(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *rr,
+			uint8_t *rank, uint8_t *flags, uint32_t *timestamp);
 
 /**
  * Insert the selected RRSIG RRSet of the selected type covered into cache, replacing any existing data.
@@ -259,4 +265,5 @@ int kr_cache_peek_rrsig(struct kr_cache *cache, knot_rrset_t *rr, uint8_t *rank,
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_insert_rrsig(struct kr_cache *cache, const knot_rrset_t *rr, uint8_t rank, uint8_t flags, uint32_t timestamp);
+int kr_cache_insert_rrsig(struct kr_cache *cache, const kr_ecs_t *ecs, const knot_rrset_t *rr,
+			  uint8_t rank, uint8_t flags, uint32_t timestamp);

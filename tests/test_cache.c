@@ -154,7 +154,7 @@ static void test_fake_invalid (void **state)
 	const struct kr_cdb_api *api_saved = NULL;
 	knot_dname_t dname[] = "";
 	struct kr_cache *cache = *state;
-	struct kr_cache_entry *entry = NULL;
+	struct kr_cache_entry entry;
 	int ret = 0;
 
 	ret = kr_cache_peek(cache, KR_CACHE_USER, dname, KNOT_RRTYPE_TSIG, &entry, 0);
@@ -189,7 +189,7 @@ static void test_invalid(void **state)
 {
 	knot_dname_t dname[] = "";
 	uint32_t timestamp = CACHE_TIME;
-	struct kr_cache_entry *entry = NULL;
+	struct kr_cache_entry entry;
 	struct kr_cache *cache = (*state);
 	struct kr_cdb_opts opts = {
 		global_env,

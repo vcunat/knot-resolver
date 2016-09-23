@@ -49,9 +49,9 @@ static int loot_rr(struct kr_cache *cache, knot_pkt_t *pkt, const knot_dname_t *
 	knot_rrset_t cache_rr;
 	knot_rrset_init(&cache_rr, (knot_dname_t *)name, rrtype, rrclass);
 	if (fetch_rrsig) {
-		ret = kr_cache_peek_rrsig(cache, &cache_rr, rank, flags, &drift);
+		ret = kr_cache_peek_rrsig(cache, qry->ecs, &cache_rr, rank, flags, &drift);
 	} else {
-		ret = kr_cache_peek_rr(cache, &cache_rr, rank, flags, &drift, qry->ecs);
+		ret = kr_cache_peek_rr(cache, qry->ecs, &cache_rr, rank, flags, &drift);
 	}
 	if (ret != 0) {
 		return ret;
@@ -167,7 +167,8 @@ static int commit_rrsig(struct rrcache_baton *baton, uint8_t rank, uint8_t flags
 		return kr_ok();
 	}
 	/* Commit covering RRSIG to a separate cache namespace. */
-	return kr_cache_insert_rrsig(baton->cache, rr, rank, flags, baton->timestamp);
+	return kr_cache_insert_rrsig(baton->cache, baton->qry->ecs, rr, rank,
+					flags, baton->timestamp);
 }
 
 static int commit_rr(const char *key, void *val, void *data)
@@ -200,7 +201,8 @@ static int commit_rr(const char *key, void *val, void *data)
 	}
 	/* Accept only better rank (if not overriding) */
 	if (!(rank & KR_RANK_SECURE) && !(baton->qry->flags & QUERY_NO_CACHE)) {
-		int cached_rank = kr_cache_peek_rank(baton->cache, KR_CACHE_RR, rr->owner, rr->type, baton->timestamp);
+		int cached_rank = kr_cache_peek_rank(baton->cache, KR_CACHE_RR,
+					rr->owner, rr->type, baton->qry->ecs, baton->timestamp);
 		if (cached_rank >= rank) {
 			return kr_ok();
 		}
@@ -210,7 +212,8 @@ static int commit_rr(const char *key, void *val, void *data)
 	if ((rank & KR_RANK_AUTH) && (baton->qry->flags & QUERY_DNSSEC_WEXPAND)) {
 		flags |= KR_CACHE_FLAG_WCARD_PROOF;
 	}
-	return kr_cache_insert_rr(baton->cache, rr, rank, flags, baton->timestamp);
+	return kr_cache_insert_rr(baton->cache, baton->qry->ecs, rr, rank,
+				  flags, baton->timestamp);
 }
 
 static int stash_commit(map_t *stash, struct kr_query *qry, struct kr_cache *cache, struct kr_request *req)

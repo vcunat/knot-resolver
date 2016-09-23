@@ -13,7 +13,7 @@
 
 #define MSG(type, fmt...) kr_log_##type ("[module client subnet]: " fmt)
 
-typedef struct kr_client_subnet data_t;
+typedef struct kr_ecs data_t;
 
 /** Fill kr_query::client_subnet appropriately (a data_t instance). */
 static int begin(knot_layer_t *ctx, void *module_param)

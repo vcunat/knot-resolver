@@ -46,28 +46,36 @@ static void adjust_ttl(knot_rrset_t *rr, uint32_t drift)
 	}
 }
 
-static int loot_cache_pkt(struct kr_cache *cache, knot_pkt_t *pkt, const knot_dname_t *qname,
-                          uint16_t rrtype, bool want_secure, uint32_t timestamp, uint8_t *flags)
+/** @internal Try to find a shortcut directly to searched packet. */
+static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_query *qry, uint8_t *flags)
 {
-	struct kr_cache_entry *entry = NULL;
-	int ret = kr_cache_peek(cache, KR_CACHE_PKT, qname, rrtype, &entry, &timestamp);
+	uint32_t timestamp = qry->timestamp.tv_sec;
+	const knot_dname_t *qname = qry->sname;
+	uint16_t rrtype = qry->stype;
+	const bool want_secure = (qry->flags & QUERY_DNSSEC_WANT);
+	//return loot_cache_pkt(cache, pkt, qname, rrtype, want_secure, timestamp, flags);
+
+
+	struct kr_cache_entry entry;
+	int ret = kr_cache_peek(cache, KR_CACHE_PKT, qname, rrtype, NULL/*qry->ecs*/,
+				&timestamp, &entry);
 	if (ret != 0) { /* Not in the cache */
 		return ret;
 	}
 
 	/* Check that we have secure rank. */
-	if (want_secure && entry->rank == KR_RANK_BAD) {
+	if (want_secure && entry.rank == KR_RANK_BAD) {
 		return kr_error(ENOENT);
 	}
 
 	/* Copy answer, keep the original message id */
-	if (entry->count <= pkt->max_size) {
+	if (entry.data_len <= pkt->max_size) {
 		/* Keep original header and copy cached */
 		uint16_t msgid = knot_wire_get_id(pkt->wire);
 		/* Copy and reparse */
 		knot_pkt_clear(pkt);
-		memcpy(pkt->wire, entry->data, entry->count);
-		pkt->size = entry->count;
+		memcpy(pkt->wire, entry.data, entry.data_len);
+		pkt->size = entry.data_len;
 		knot_pkt_parse(pkt, 0);
 		/* Restore header bits */
 		knot_wire_set_id(pkt->wire, msgid);
@@ -84,20 +92,10 @@ static int loot_cache_pkt(struct kr_cache *cache, knot_pkt_t *pkt, const knot_dn
 
 	/* Copy cache entry flags */
 	if (flags) {
-		*flags = entry->flags;
+		*flags = entry.flags;
 	}
 
 	return ret;
-}
-
-/** @internal Try to find a shortcut directly to searched packet. */
-static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_query *qry, uint8_t *flags)
-{
-	uint32_t timestamp = qry->timestamp.tv_sec;
-	const knot_dname_t *qname = qry->sname;
-	uint16_t rrtype = qry->stype;
-	const bool want_secure = (qry->flags & QUERY_DNSSEC_WANT);
-	return loot_cache_pkt(cache, pkt, qname, rrtype, want_secure, timestamp, flags);
 }
 
 static int pktcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
@@ -183,7 +181,8 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (!knot_wire_get_aa(pkt->wire) || knot_pkt_qclass(pkt) != KNOT_CLASS_IN) {
 		return ctx->state;
 	}
-	/* Cache only NODATA/NXDOMAIN or metatype/RRSIG or wildcard expanded answers. */
+	/* Cache only NODATA/NXDOMAIN or metatype/RRSIG or wildcard expanded answers.
+	 * FIXME: review after ECS */
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = (knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
 	const bool is_negative = kr_response_classify(pkt) & (PKT_NODATA|PKT_NXDOMAIN);
@@ -198,38 +197,39 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (!qname) {
 		return ctx->state;
 	}
-	knot_db_val_t data = { pkt->wire, pkt->size };
-	struct kr_cache_entry header = {
+	struct kr_cache_entry entry = {
 		.timestamp = qry->timestamp.tv_sec,
 		.ttl = ttl,
 		.rank = KR_RANK_BAD,
 		.flags = KR_CACHE_FLAG_NONE,
-		.count = data.len
+		.data_len = pkt->size,
+		.data = pkt->wire,
 	};
 
 	/* Set cache rank */
 	if (qry->flags & QUERY_DNSSEC_WANT) {
-		header.rank = KR_RANK_SECURE;
+		entry.rank = KR_RANK_SECURE;
 	} else if (qry->flags & QUERY_DNSSEC_INSECURE) {
-		header.rank = KR_RANK_INSECURE;
+		entry.rank = KR_RANK_INSECURE;
 	}
 
 	/* Set cache flags */
 	if (qry->flags & QUERY_DNSSEC_WEXPAND) {
-		header.flags |= KR_CACHE_FLAG_WCARD_PROOF;
+		entry.flags |= KR_CACHE_FLAG_WCARD_PROOF;
 	}
 
 	/* Check if we can replace (allow current or better rank, SECURE is always accepted). */
 	struct kr_cache *cache = &req->ctx->cache;
-	if (header.rank < KR_RANK_SECURE) {
-		int cached_rank = kr_cache_peek_rank(cache, KR_CACHE_PKT, qname, qtype, header.timestamp);
-		if (cached_rank > header.rank) {
+	if (entry.rank < KR_RANK_SECURE) {
+		int cached_rank = kr_cache_peek_rank(cache, KR_CACHE_PKT, qname,
+						     qtype, NULL, entry.timestamp);
+		if (cached_rank > entry.rank) {
 			return ctx->state;
 		}
 	}
 
 	/* Stash answer in the cache */
-	int ret = kr_cache_insert(cache, KR_CACHE_PKT, qname, qtype, &header, data);
+	int ret = kr_cache_insert(cache, NULL, KR_CACHE_PKT, qname, qtype, &entry);
 	if (ret == 0) {
 		DEBUG_MSG(qry, "=> answer cached for TTL=%u\n", ttl);
 	}
