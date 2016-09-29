@@ -165,8 +165,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 		int ret = kr_dnssec_key_from_rdata(&created_key, keys->owner,
 			                       knot_rdata_data(krr), knot_rdata_rdlen(krr));
 		if (ret != 0) {
-			vctx->result = ret;
-			return vctx->result;
+			return ret;
 		}
 		key = created_key;
 	}
@@ -222,14 +221,12 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 			}
 			/* Validated with current key, OK */
 			kr_dnssec_key_free(&created_key);
-			vctx->result = kr_ok();
-			return vctx->result;
+			return kr_ok();
 		}
 	}
 	/* No applicable key found, cannot be validated. */
 	kr_dnssec_key_free(&created_key);
-	vctx->result = owner_type_matched ? kr_error(EFAULT) : kr_error(ENOENT);
-	return vctx->result;
+	return owner_type_matched ? kr_error(EFAULT) : kr_error(ENOENT);
 }
 
 int kr_dnskeys_trusted(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *ta)

@@ -84,12 +84,22 @@ static int validate_rrset(const char *key, void *val, void *data)
 		return vctx->result;
 	}
 	int ret = kr_rrset_validate(vctx, rr);
-	if (vctx->result == kr_error(EFAULT)) {
-		/* validation fails, save the pointer */
+	if (ret == kr_error(EFAULT)) {
+		/* validation fails, save the pointer and exit */
+		vctx->result = ret;
 		vctx->rr = rr;
-	} else if (vctx->result != 0 && !vctx->rr) {
-		/* first time no RRSIGs were found */
-		vctx->rr = rr;
+	} else if (ret == kr_error(ENOENT)) {
+		/* RRSIGs were found */
+		if (!vctx->rr) {
+			/* save pointer if it happens for the first time */
+			vctx->result = ret;
+			vctx->rr = rr;
+		}
+		/* continue validation */
+		ret = 0;
+	} else if (ret) {
+		/* save the error code */
+		vctx->result = ret;
 	}
 	return ret;
 }
