@@ -257,7 +257,7 @@ static int lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
 	if (!ret) {
 		/* We have an OK short entry and timestamp has been updated already.
 		 * Let's try to find the rest of the entry. */
-		uint16_t mmes_hash = *(uint16_t *)(uint8_t *)mmes->data;
+		uint16_t mmes_hash = mmes->data[0] + 256 * mmes->data[1];
 		key.len = cache_key(keybuf, tag, name, type, ecs, mmes_hash);
 		ret = key.len ? cache_op(cache, read, &key, &val, 1) : kr_error(EINVAL);
 	}
@@ -321,8 +321,6 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
 	return err ? err : e.rank;
 }
 
-#if 0
-#endif
 /** Serialize RRs, clearing their TTLs and returning the max. TTL.
  * TODO: why the *maximum* TTL from the RRs? */
 static uint32_t serialize_rdataset(knot_rdata_t *rdata, uint16_t len, uint8_t *dest)
@@ -436,7 +434,8 @@ int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
 	/* The second structure to write is small, so let's construct it. */
 	mmentry_t *mm_val = (mmentry_t *)key2buf; /* reuse the large space */
 	entry2mm(entry, ttl, mm_val);
-	*(uint16_t *)(uint8_t *)mm_val->data = hash;
+	mm_val->data[0] = hash % 256;
+	mm_val->data[1] = hash / 256;
 	knot_db_val_t value = {
 		.data = mm_val,
 		.len = offsetof(mmentry_t, data) + 2,
@@ -478,7 +477,6 @@ int kr_cache_clear(struct kr_cache *cache)
 	return ret;
 }
 
-#if 0
 int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, knot_db_val_t *val, int maxcount)
 {
 	if (!cache_isvalid(cache) || !name ) {
@@ -489,7 +487,7 @@ int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name
 	}
 
 	uint8_t keybuf[KEY_SIZE];
-	size_t key_len = cache_key(keybuf, tag, name, 0);
+	size_t key_len = cache_key(keybuf, tag, name, 0, NULL, 0);
 	if (key_len == 0) {
 		return kr_error(EILSEQ);
 	}
@@ -498,7 +496,6 @@ int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name
 	knot_db_val_t key = { keybuf, key_len - 2 };
 	return cache_op(cache, match, &key, val, maxcount);
 }
-#endif
 
 /** @internal Count the number of RRs if the length of data is known,
  *  i.e. "inverse" of knot_rdataset_size. */

@@ -67,7 +67,6 @@ struct kr_cache_entry
 	uint8_t  flags; /*!< Or-combination of enum kr_cache_flag. */
 	uint16_t data_len; /*!< The byte-length of data. */
 	void    *data;  /*!< Non-interpreted data. */
-	//knot_rdataset_t rrs; /*!< The resource records. FIXME: buggy references FIXME TODO */
 };
 
 /**
@@ -196,6 +195,8 @@ int kr_cache_clear(struct kr_cache *cache);
  * @param vals array of values to store the result
  * @param valcnt maximum number of retrieved keys
  * @return number of retrieved keys or an error
+ *
+ * @note It will give strange/verbose results if ECS was used in the cache.
  */
 KR_EXPORT
 int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name, knot_db_val_t *vals, int valcnt);
