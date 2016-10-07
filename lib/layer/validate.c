@@ -34,6 +34,8 @@
 #include "lib/utils.h"
 #include "lib/defines.h"
 #include "lib/module.h"
+#include "lib/defines.h"
+#include "lib/dnssec/ta.h"
 
 #define DEBUG_MSG(qry, fmt...) QRDEBUG(qry, "vldr", fmt)
 
@@ -299,7 +301,9 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 	struct kr_zonecut *cut = &qry->zone_cut;
 
 	/* RFC4035 3.1.4. authoritative must send either DS or proof of non-existence.
-	 * If it contains neither, the referral is bogus (or an attempted downgrade attack).
+	 * If it contains neither, resolver must query the parent for the DS (RFC4035 5.2.).
+	 * If DS exists, the referral is OK,
+	 * otherwise referral is bogus (or an attempted downgrade attack).
 	 */
 
 	unsigned section = KNOT_ANSWER;
@@ -333,12 +337,20 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 				/* No-data answer, QTYPE is DS, rfc5155 8.6 */
 				ret = kr_nsec3_no_data(answer, KNOT_AUTHORITY, proved_name, KNOT_RRTYPE_DS);
 			}
-			if (ret == kr_error(DNSSEC_NOT_FOUND)) {
+			if (ret == kr_error(DNSSEC_OUT_OF_RANGE)) {
 				/* Not bogus, going insecure due to optout */
 				ret = 0;
 			}
 		}
-		if (ret != 0) {
+		if (!knot_wire_get_aa(answer->wire) && ret == DNSSEC_NOT_FOUND) {
+			/* referral, no DS\DNSSEC found.
+			 * Check if DS already was fetched. */
+			knot_rrset_t *ta = cut->trust_anchor;
+			if (knot_dname_is_equal(cut->name, ta->owner)) {
+				/* DS is OK */
+				ret = 0;
+			}
+		} else if (ret != 0) {
 			DEBUG_MSG(qry, "<= bogus proof of DS non-existence\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 		} else {
@@ -369,6 +381,22 @@ static const knot_dname_t *signature_authority(knot_pkt_t *pkt)
 	return NULL;
 }
 
+
+static bool pkt_contains_only(knot_pkt_t *pkt, knot_section_t sect_id,
+			      enum knot_rr_type rr_type)
+{
+	assert(pkt);
+	const knot_pktsection_t *sec = knot_pkt_section(pkt, sect_id);
+	for (unsigned j = 0; j < sec->count; ++j) {
+		const knot_rrset_t *rr = knot_pkt_rr(sec, j);
+		if (rr->type != rr_type) {
+			return false;
+		}
+	}
+	return true;
+}
+
+
 static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 {
 	int ret = 0;
@@ -392,6 +420,10 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 		return KNOT_STATE_FAIL;
 	}
 
+	uint8_t pkt_rcode = knot_wire_get_rcode(pkt->wire);
+	uint16_t qtype = knot_pkt_qtype(pkt);
+	bool has_nsec3 = pkt_has_type(pkt, KNOT_RRTYPE_NSEC3);
+
 	/* Track difference between current TA and signer name.
 	 * This indicates that the NS is auth for both parent-child, and we must update DS/DNSKEY to validate it.
 	 */
@@ -399,6 +431,13 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	const knot_dname_t *ta_name = qry->zone_cut.trust_anchor ? qry->zone_cut.trust_anchor->owner : NULL;
 	const knot_dname_t *signer = signature_authority(pkt);
 	if (track_pc_change && ta_name && (!signer || !knot_dname_is_equal(ta_name, signer))) {
+		if (!signer &&
+		    !knot_wire_get_aa(pkt->wire) &&
+		    pkt_contains_only(pkt, KNOT_AUTHORITY, KNOT_RRTYPE_NS)) {
+			/* Referral without DS\DNSSEC.
+			 * Will be processed later.     */
+			goto dnskey;
+		}
 		if (ctx->state == KNOT_STATE_YIELD) { /* Already yielded for revalidation. */
 			return KNOT_STATE_FAIL;
 		}
@@ -421,11 +460,9 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 		} /* else zone cut matches, but DS/DNSKEY doesn't => refetch. */
 		return KNOT_STATE_YIELD;
 	}
-	
+
+dnskey:
 	/* Check if this is a DNSKEY answer, check trust chain and store. */
-	uint8_t pkt_rcode = knot_wire_get_rcode(pkt->wire);
-	uint16_t qtype = knot_pkt_qtype(pkt);
-	bool has_nsec3 = pkt_has_type(pkt, KNOT_RRTYPE_NSEC3);
 	if (knot_wire_get_aa(pkt->wire) && qtype == KNOT_RRTYPE_DNSKEY) {
 		ret = validate_keyset(qry, pkt, has_nsec3);
 		if (ret != 0) {
@@ -466,7 +503,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 				ret = kr_nsec3_no_data(pkt, KNOT_AUTHORITY, knot_pkt_qname(pkt), knot_pkt_qtype(pkt));
 			}
 			if (ret != 0) {
-				if (has_nsec3 && (ret == kr_error(DNSSEC_NOT_FOUND))) {
+				if (has_nsec3 && (ret == kr_error(DNSSEC_OUT_OF_RANGE))) {
 					DEBUG_MSG(qry, "<= can't prove NODATA due to optout, going insecure\n");
 					qry->flags &= ~QUERY_DNSSEC_WANT;
 					qry->flags |= QUERY_DNSSEC_INSECURE;
@@ -502,7 +539,16 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 
 	/* Check and update current delegation point security status. */
 	ret = update_delegation(req, qry, pkt, has_nsec3);
-	if (ret != 0) {
+	if (ret == DNSSEC_NOT_FOUND) {
+		if (ctx->state == KNOT_STATE_YIELD) {
+			DEBUG_MSG(qry, "<= can't validate referral\n");
+			return KNOT_STATE_FAIL;
+		} else {
+			/* Check the trust chain and query DS\DNSKEY if needed. */
+			DEBUG_MSG(qry, "<= DS\\DNSSEC was not found, querying for DS\n");
+			return KNOT_STATE_YIELD;
+		}
+	} else if (ret != 0) {
 		return KNOT_STATE_FAIL;
 	}
 	/* Update parent query zone cut */
