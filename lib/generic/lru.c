@@ -139,23 +139,24 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 	uint32_t khash = hash(key, key_len);
 	uint16_t khash_top = khash >> 16;
 	lru_group_t *g = &lru->groups[khash & ((1 << lru->log_groups) - 1)];
-	struct lru_item *it;
+	struct lru_item *it = NULL;
 	uint i;
 	// scan the *stored* elements in the group
-	for (i = 0; i < LRU_ASSOC; ++i)
+	for (i = 0; i < LRU_ASSOC; ++i) {
 		if (g->hashes[i] == khash_top) {
 			it = g->items[i];
 			if (likely(it && it->key_len == key_len
 					&& memcmp(it->data, key, key_len) == 0))
 				goto found; // to reduce huge nesting depth
 		}
+	}
 	// key not found; first try an empty/counted-out place to insert
 	if (do_insert)
 		for (i = 0; i < LRU_ASSOC; ++i)
 			if (g->items[i] == NULL || g->counts[i] == 0)
 				goto insert;
 	// check if we track key's count at least
-	for (i = LRU_ASSOC; i < LRU_TRACKED; ++i)
+	for (i = LRU_ASSOC; i < LRU_TRACKED; ++i) {
 		if (g->hashes[i] == khash_top) {
 			group_inc_count(g, i);
 			if (!do_insert)
@@ -172,6 +173,7 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				}
 			return NULL;
 		}
+	}
 	// not found at all: decrement all counts but only on every LRU_TRACKED occasion
 	if (g->counts[LRU_TRACKED])
 		--g->counts[LRU_TRACKED];
