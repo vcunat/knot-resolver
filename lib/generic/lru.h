@@ -203,9 +203,9 @@ struct lru_group {
 } CACHE_ALIGNED;
 
 /* The sizes are chosen so lru_group just fits into a single x86 cache line. */
-_Static_assert(64 == sizeof(struct lru_group)
+static_assert(64 == sizeof(struct lru_group)
 		&& 64 == LRU_ASSOC * sizeof(void*) + (LRU_TRACKED+1) * 4,
-		"bad sizing for you sizeof(void*)");
+		"bad sizing for your sizeof(void*)");
 
 struct lru {
 	struct knot_mm *mm, /**< Memory context to use keys. */
