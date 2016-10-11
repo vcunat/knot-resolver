@@ -326,6 +326,13 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
 	return found->rank;
 }
 
+/** Unsafe swapping. */
+#define SWAP(a, b) do { \
+	__typeof__(a) tmp = (a); \
+	(a) = (b); \
+	(b) = tmp; \
+	} while (false)
+
 int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t drift,
 		uint reorder, knot_mm_t *mm)
 {
@@ -341,28 +348,30 @@ int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t dr
 	}
 
 	/* Find valid records */
-	knot_rdata_t *valid[src->rrs.rr_count];
-	int valid_count = 0;
+	knot_rdata_t **valid = malloc(sizeof(knot_rdata_t *) * src->rrs.rr_count);
+	uint16_t valid_count = 0;
 	knot_rdata_t *rd = src->rrs.data;
-	for (int i = 0; i < src->rrs.rr_count; ++i) {
+	for (uint16_t i = 0; i < src->rrs.rr_count; ++i) {
 		if (knot_rdata_ttl(rd) >= drift) {
 			valid[valid_count++] = rd;
 		}
 		rd = kr_rdataset_next(rd);
 	}
 
-	knot_rdata_t **valid_ord;
-	knot_rdata_t *valid_rot[valid_count]; /* Valid array rotated left by `shift` */
-	if (reorder) {
-		valid_ord = valid_rot;
-		int shift = reorder % valid_count;
-		memcpy(valid_rot, valid + shift, sizeof(*valid) * (valid_count - shift));
-		memcpy(valid_rot + valid_count - shift, valid, sizeof(*valid) * shift);
-	} else {
-		valid_ord = valid;
+	if (reorder && valid_count > 1) {
+		/* Reorder the valid part; it's a reversed rotation,
+		 * done by two array reversals. */
+		uint16_t shift = reorder % valid_count;
+		for (uint16_t i = 0; i < shift / 2; ++i) {
+			SWAP(valid[i], valid[shift - 1 - i]);
+		}
+		for (uint16_t i = 0; i < (valid_count - shift) / 2; ++i) {
+			SWAP(valid[shift + i], valid[valid_count - 1 - i]);
+		}
 	}
 
-	int err = knot_rdataset_gather(&dst->rrs, valid_ord, valid_count, mm);
+	int err = knot_rdataset_gather(&dst->rrs, valid, valid_count, mm);
+	free(valid);
 	if (err) {
 		knot_rrset_clear(dst, mm);
 		return kr_error(err);
