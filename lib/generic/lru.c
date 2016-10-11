@@ -58,20 +58,24 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru)
 /** @internal See lru_apply. */
 KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 {
-	assert(lru);
+	assert(lru && f);
 	for (size_t i = 0; i < (1 << (size_t)lru->log_groups); ++i) {
 		lru_group_t *g = &lru->groups[i];
 		for (uint j = 0; j < LRU_ASSOC; ++j) {
 			struct lru_item *it = g->items[j];
 			if (!it)
 				continue;
-			int ret = f(it->data, it->key_len, item_val(it), baton);
-			assert(-1 <= ret && ret <= 1);
-			if (ret < 0) { // evict
+			enum lru_apply_do ret =
+				f(it->data, it->key_len, item_val(it), baton);
+			switch(ret) {
+			case LRU_APPLY_DO_EVICT: // evict
 				mm_free(lru->mm, it);
 				g->items[j] = NULL;
 				g->counts[j] = 0;
 				g->hashes[j] = 0;
+				break;
+			default:
+				assert(ret == LRU_APPLY_DO_NOTHING);
 			}
 		}
 	}

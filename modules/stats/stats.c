@@ -326,7 +326,7 @@ static char* stats_list(void *env, struct kr_module *module, const char *args)
 }
 
 /** @internal Helper for dump_list: add a single namehash_t item to JSON. */
-static int dump_value(const char *key, uint len, unsigned *val, void *baton)
+static enum lru_apply_do dump_value(const char *key, uint len, unsigned *val, void *baton)
 {
 	uint16_t key_type = 0;
 	char key_name[KNOT_DNAME_MAXLEN], type_str[16];
@@ -340,7 +340,7 @@ static int dump_value(const char *key, uint len, unsigned *val, void *baton)
 	json_append_member(json_val, "name",  json_mkstring(key_name));
 	json_append_member(json_val, "type",  json_mkstring(type_str));
 	json_append_element((JsonNode *)baton, json_val);
-	return 0; // keep the item
+	return LRU_APPLY_DO_NOTHING; // keep the item
 }
 /**
  * List frequent names.

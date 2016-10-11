@@ -137,8 +137,8 @@
  * @brief Apply a function to every item in LRU.
  *
  * @param table pointer to LRU
- * @param function int (*function)(const char *key, uint len, val_type *val, void *baton)
- *        return value meanings: 0 do nothing, -1 evict the item, 1 move to front.
+ * @param function enum lru_apply_do (*function)(const char *key, uint len, val_type *val, void *baton)
+ *        See enum lru_apply_do for the return type meanings.
  * @param baton extra pointer passed to each function invocation
  */
 #define lru_apply(table, function, baton) do { \
@@ -146,6 +146,13 @@
 	(void)(fun_dummy == (function)); /* produce a warning with incompatible function type */ \
 	lru_apply_impl(&(table)->lru, (lru_apply_fun)(function), (baton)); \
 	} while (false)
+
+/** @brief Possible actions to do with an element. */
+enum lru_apply_do {
+	LRU_APPLY_DO_NOTHING,
+	LRU_APPLY_DO_EVICT,
+	/* maybe more in future*/
+};
 
 /**
  * @brief Return the real capacity - maximum number of keys holdable within.
@@ -169,7 +176,7 @@ static inline uint round_power(uint size, uint power)
 /** @cond internal */
 
 #define lru_apply_fun_g(name, val_type) \
-	int (*(name))(const char *key, uint len, val_type *val, void *baton)
+	enum lru_apply_do (*(name))(const char *key, uint len, val_type *val, void *baton)
 typedef lru_apply_fun_g(lru_apply_fun, void);
 
 #if __GNUC__ >= 4
