@@ -108,14 +108,6 @@ KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm_array, knot
 	return lru;
 }
 
-/** Swap two places; it could be made public if useful elsewhere. */
-#define swap(x, y) do { /* http://stackoverflow.com/a/3982430/587396 */ \
-	unsigned char swap_temp[sizeof(x) == sizeof(y) ? (ssize_t)sizeof(x) : -1]; \
-	memcpy(swap_temp, &y, sizeof(x)); \
-	memcpy(&y,        &x, sizeof(x)); \
-	memcpy(&x, swap_temp, sizeof(x)); \
-	} while(0)
-
 /** @internal Decrement all counters within a group. */
 static void group_dec_counts(lru_group_t *g) {
 	g->counts[LRU_TRACKED] = LRU_TRACKED;
@@ -170,8 +162,8 @@ KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				if (unlikely(g->counts[i] > g->counts[j])) {
 					// evict key j, i.e. swap with i
 					--g->counts[i]; // we increment it below
-					swap(g->counts[i], g->counts[j]);
-					swap(g->hashes[i], g->hashes[j]);
+					SWAP(g->counts[i], g->counts[j]);
+					SWAP(g->hashes[i], g->hashes[j]);
 					i = j;
 					goto insert;
 				}
