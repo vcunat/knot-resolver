@@ -326,13 +326,6 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
 	return found->rank;
 }
 
-/** Unsafe swapping. */
-#define SWAP(a, b) do { \
-	__typeof__(a) tmp = (a); \
-	(a) = (b); \
-	(b) = tmp; \
-	} while (false)
-
 int kr_cache_materialize(knot_rrset_t *dst, const knot_rrset_t *src, uint32_t drift,
 		uint reorder, knot_mm_t *mm)
 {
