@@ -542,6 +542,7 @@ dnskey:
 	if (ret == DNSSEC_NOT_FOUND) {
 		if (ctx->state == KNOT_STATE_YIELD) {
 			DEBUG_MSG(qry, "<= can't validate referral\n");
+			qry->flags |= QUERY_DNSSEC_BOGUS;
 			return KNOT_STATE_FAIL;
 		} else {
 			/* Check the trust chain and query DS\DNSKEY if needed. */
