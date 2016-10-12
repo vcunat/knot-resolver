@@ -201,8 +201,8 @@ static int commit_rr(const char *key, void *val, void *data)
 	}
 	/* Accept only better rank (if not overriding) */
 	if (!(rank & KR_RANK_SECURE) && !(baton->qry->flags & QUERY_NO_CACHE)) {
-		int cached_rank = kr_cache_peek_rank(baton->cache, KR_CACHE_RR,
-					rr->owner, rr->type, baton->qry->ecs, baton->timestamp);
+		int cached_rank = kr_cache_peek_rank(baton->cache, baton->qry->ecs,
+					KR_CACHE_RR, rr->owner, rr->type, baton->timestamp);
 		if (cached_rank >= rank) {
 			return kr_ok();
 		}

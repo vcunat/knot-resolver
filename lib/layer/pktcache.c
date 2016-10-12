@@ -57,7 +57,7 @@ static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_quer
 
 
 	struct kr_cache_entry entry;
-	int ret = kr_cache_peek(cache, KR_CACHE_PKT, qname, rrtype, NULL/*qry->ecs*/,
+	int ret = kr_cache_peek(cache, NULL/*qry->ecs*/, KR_CACHE_PKT, qname, rrtype,
 				&timestamp, &entry);
 	if (ret != 0) { /* Not in the cache */
 		return ret;
@@ -221,8 +221,8 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Check if we can replace (allow current or better rank, SECURE is always accepted). */
 	struct kr_cache *cache = &req->ctx->cache;
 	if (entry.rank < KR_RANK_SECURE) {
-		int cached_rank = kr_cache_peek_rank(cache, KR_CACHE_PKT, qname,
-						     qtype, NULL, entry.timestamp);
+		int cached_rank = kr_cache_peek_rank(cache, NULL, KR_CACHE_PKT,
+						     qname, qtype, entry.timestamp);
 		if (cached_rank > entry.rank) {
 			return ctx->state;
 		}

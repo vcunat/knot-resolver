@@ -152,8 +152,8 @@ static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct k
 		--labels;
 	}
 	for (int i = 0; i < labels; ++i) {
-		int ret = kr_cache_peek(cache, KR_CACHE_PKT, target, KNOT_RRTYPE_NS,
-					NULL, &timestamp, &entry);
+		int ret = kr_cache_peek(cache, NULL, KR_CACHE_PKT, target,
+					KNOT_RRTYPE_NS, &timestamp, &entry);
 		if (ret == 0) { /* Either NXDOMAIN or NODATA, start here. */
 			/* @todo We could stop resolution here for NXDOMAIN, but we can't because of broken CDNs */
 			qry->flags |= QUERY_NO_MINIMIZE;

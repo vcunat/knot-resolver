@@ -287,9 +287,9 @@ static int lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
 	return kr_ok();
 }
 
-int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-		  uint16_t type, const kr_ecs_t *ecs, uint32_t *timestamp,
-		  struct kr_cache_entry *entry)
+int kr_cache_peek(struct kr_cache *cache, const kr_ecs_t *ecs,
+		  uint8_t tag, const knot_dname_t *name, uint16_t type,
+		  uint32_t *timestamp, struct kr_cache_entry *entry)
 {
 	bool precond = cache_isvalid(cache) && name && entry;
 	if (!precond) {
@@ -307,8 +307,9 @@ int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
 	return err;
 }
 
-int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-			uint16_t type, const kr_ecs_t *ecs, uint32_t timestamp)
+int kr_cache_peek_rank(struct kr_cache *cache, const kr_ecs_t *ecs,
+			uint8_t tag, const knot_dname_t *name, uint16_t type,
+			uint32_t timestamp)
 {
 	bool precond = cache_isvalid(cache) && name;
 	if (!precond) {
@@ -446,8 +447,8 @@ int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
 	return ret;
 }
 
-int kr_cache_remove(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-		    uint16_t type, const kr_ecs_t *ecs)
+int kr_cache_remove(struct kr_cache *cache, const kr_ecs_t *ecs,
+		    uint8_t tag, const knot_dname_t *name, uint16_t type)
 {
 	if (!cache_isvalid(cache) || !name ) {
 		return kr_error(EINVAL);
@@ -523,7 +524,7 @@ static int peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *rr
 	/* Check if the RRSet is in the cache. */
 	struct kr_cache_entry entry;
 	uint8_t tag = is_sig ? KR_CACHE_SIG : KR_CACHE_RR;
-	int ret = kr_cache_peek(cache, tag, rr->owner, rr->type, ecs, timestamp, &entry);
+	int ret = kr_cache_peek(cache, ecs, tag, rr->owner, rr->type, timestamp, &entry);
 	if (ret != 0) {
 		return ret;
 	}

@@ -57,7 +57,7 @@ enum kr_cache_flag {
 
 
 /**
- * Serialized form of the RRSet with inception timestamp and maximum TTL.
+ * Data to be cached.
  */
 struct kr_cache_entry
 {
@@ -83,6 +83,8 @@ struct kr_cache
 		uint32_t delete;      /**< Number of deletions */
 	} stats;
 };
+
+//FIXME: review API docs in the whole file
 
 /**
  * Open/create cache with provided storage options.
@@ -131,9 +133,9 @@ static inline bool kr_cache_is_open(struct kr_cache *cache)
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-		  uint16_t type, const kr_ecs_t *ecs, uint32_t *timestamp,
-		  struct kr_cache_entry *entry);
+int kr_cache_peek(struct kr_cache *cache, const kr_ecs_t *ecs,
+		  uint8_t tag, const knot_dname_t *name, uint16_t type,
+		  uint32_t *timestamp, struct kr_cache_entry *entry);
 
 /**
  * Peek the cache for given key and retrieve it's rank.
@@ -148,8 +150,9 @@ int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
  * @note It doesn't change the hit/miss statistics.
  */
 KR_EXPORT
-int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-			uint16_t type, const kr_ecs_t *ecs, uint32_t timestamp);
+int kr_cache_peek_rank(struct kr_cache *cache, const kr_ecs_t *ecs,
+			uint8_t tag, const knot_dname_t *name, uint16_t type,
+			uint32_t timestamp);
 
 /**
  * Insert asset into cache, replacing any existing data.
@@ -161,8 +164,8 @@ int kr_cache_peek_rank(struct kr_cache *cache, uint8_t tag, const knot_dname_t *
  * @return 0 or an errcode
  */
 KR_EXPORT
-int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
-		    const knot_dname_t *name, uint16_t type,
+int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs,
+		    uint8_t tag, const knot_dname_t *name, uint16_t type,
 		    const struct kr_cache_entry *entry);
 
 /**
@@ -176,8 +179,8 @@ int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
  * @note unused for now
  */
 KR_EXPORT
-int kr_cache_remove(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
-		    uint16_t type, const kr_ecs_t *ecs);
+int kr_cache_remove(struct kr_cache *cache, const kr_ecs_t *ecs,
+		    uint8_t tag, const knot_dname_t *name, uint16_t type);
 
 /**
  * Clear all items from the cache.
@@ -214,8 +217,6 @@ int kr_cache_match(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name
 KR_EXPORT
 int kr_cache_peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *rr,
 		     uint8_t *rank, uint8_t *flags, uint32_t *timestamp);
-
-// FIXME: review the order of ecs parameter - perhaps always the second?
 
 /**
  * Clone read-only RRSet and adjust TTLs.
