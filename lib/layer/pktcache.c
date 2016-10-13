@@ -49,7 +49,6 @@ static void adjust_ttl(knot_rrset_t *rr, uint32_t drift)
 /** @internal Try to find a shortcut directly to searched packet. */
 static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_query *qry, uint8_t *flags)
 {
-	uint32_t timestamp = qry->timestamp.tv_sec;
 	const knot_dname_t *qname = qry->sname;
 	uint16_t rrtype = qry->stype;
 	const bool want_secure = (qry->flags & QUERY_DNSSEC_WANT);
@@ -57,8 +56,9 @@ static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_quer
 
 
 	struct kr_cache_entry entry;
+	entry.timestamp = qry->timestamp.tv_sec;
 	int ret = kr_cache_peek(cache, NULL/*qry->ecs*/, KR_CACHE_PKT, qname, rrtype,
-				&timestamp, &entry);
+				&entry);
 	if (ret != 0) { /* Not in the cache */
 		return ret;
 	}
@@ -86,7 +86,7 @@ static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_quer
 		const knot_pktsection_t *sec = knot_pkt_section(pkt, i);
 		for (unsigned k = 0; k < sec->count; ++k) {
 			const knot_rrset_t *rr = knot_pkt_rr(sec, k);
-			adjust_ttl((knot_rrset_t *)rr, timestamp);
+			adjust_ttl((knot_rrset_t *)rr, entry.timestamp/*drift*/);
 		}
 	}
 
@@ -221,9 +221,10 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Check if we can replace (allow current or better rank, SECURE is always accepted). */
 	struct kr_cache *cache = &req->ctx->cache;
 	if (entry.rank < KR_RANK_SECURE) {
-		int cached_rank = kr_cache_peek_rank(cache, NULL, KR_CACHE_PKT,
-						     qname, qtype, entry.timestamp);
-		if (cached_rank > entry.rank) {
+		struct kr_cache_entry cached;
+		cached.timestamp = entry.timestamp;
+		int err = kr_cache_peek(cache, NULL, KR_CACHE_PKT, qname, qtype, &cached);
+		if (!err && cached.rank > entry.rank) {
 			return ctx->state;
 		}
 	}
