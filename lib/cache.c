@@ -322,15 +322,17 @@ int kr_cache_peek_rank(struct kr_cache *cache, const kr_ecs_t *ecs,
 	return err ? err : e.rank;
 }
 
-/** Serialize RRs, clearing their TTLs and returning the max. TTL.
- * TODO: why the *maximum* TTL from the RRs? */
-static uint32_t serialize_rdataset(knot_rdata_t *rdata, uint16_t len, uint8_t *dest)
+/** Serialize data. If it's RRs (incl. sigs), clear their TTLs and return the minimum. */
+static uint32_t serialize_data(const void *data, uint16_t len, uint8_t tag, uint8_t *dest)
 {
-	memcpy(dest, rdata, len);
+	memcpy(dest, data, len);
+	if (tag != KR_CACHE_RR && tag != KR_CACHE_SIG) {
+		return 0;
+	}
 	knot_rdata_t *rd = dest;
 	uint32_t ttl = 0;
 	for (; rd < dest + len; rd = kr_rdataset_next(rd)) {
-		ttl = MAX(ttl, knot_rdata_ttl(rd));
+		ttl = MIN(ttl, knot_rdata_ttl(rd));
 		knot_rdata_set_ttl(rd, 0);
 	}
 	assert(dest + len == rd);
@@ -344,15 +346,6 @@ static void entry2mm(const struct kr_cache_entry *src, uint32_t ttl, mmentry_t *
 		.rank		= src->rank,
 		.flags		= src->flags,
 	};
-}
-/** Serialize a normal (complete/long) mmentry_t instance.
- * @param len byte-length of src->data
- * @note TTL will be computed iff src->ttl == 0.
- */
-static void serialize_normal(const struct kr_cache_entry *src, mmentry_t *dest)
-{
-	uint32_t ttl = serialize_rdataset(src->data, src->data_len, dest->data);
-	entry2mm(src, ttl, dest);
 }
 
 int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
@@ -389,13 +382,17 @@ int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
 			if (ret != 0) {
 				return ret;
 			}
-			serialize_normal(entry, value.data);
+			uint32_t ttl = serialize_data(entry->data, entry->data_len,
+							tag, value.data);
+			entry2mm(entry, ttl, value.data);
 			ret = cache_op(cache, sync); /* Make sure the entry is committed. */
 		} else {
 			/* Other backends must prepare contiguous data first */
 			char buf[value.len];
 			value.data = buf;
-			serialize_normal(entry, value.data);
+			uint32_t ttl = serialize_data(entry->data, entry->data_len,
+							tag, value.data);
+			entry2mm(entry, ttl, value.data);
 			ret = cache_op(cache, write, &key, &value, 1);
 		}
 
@@ -410,7 +407,7 @@ int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
 	/* Problem: we need to hash (and store) RRs with zeroed TTL,
 	 * but the API does not guarantee that now, so we make a copy. */
 	uint8_t data_ttl0[entry->data_len];
-	uint32_t ttl = serialize_rdataset(entry->data, entry->data_len, data_ttl0);
+	uint32_t ttl = serialize_data(entry->data, entry->data_len, tag, data_ttl0);
 	uint32_t hash_tmp = hash((const char *)/*sign-cast*/data_ttl0, entry->data_len);
 	uint16_t hash = hash_tmp ^ (hash_tmp >> 16);
 
