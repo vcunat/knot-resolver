@@ -342,8 +342,11 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 				ret = 0;
 			}
 		}
-		if (!knot_wire_get_aa(answer->wire) && ret == DNSSEC_NOT_FOUND) {
-			/* referral, no DS\DNSSEC found.
+		if (!knot_wire_get_aa(answer->wire) &&
+		    qry->stype != KNOT_RRTYPE_DS &&
+		    ret == DNSSEC_NOT_FOUND) {
+			/* referral,
+			 * qtype is not KNOT_RRTYPE_DS, no DS\DNSSEC found.
 			 * Check if DS already was fetched. */
 			knot_rrset_t *ta = cut->trust_anchor;
 			if (knot_dname_is_equal(cut->name, ta->owner)) {
@@ -539,7 +542,7 @@ dnskey:
 
 	/* Check and update current delegation point security status. */
 	ret = update_delegation(req, qry, pkt, has_nsec3);
-	if (ret == DNSSEC_NOT_FOUND) {
+	if (ret == DNSSEC_NOT_FOUND && qry->stype != KNOT_RRTYPE_DS) {
 		if (ctx->state == KNOT_STATE_YIELD) {
 			DEBUG_MSG(qry, "<= can't validate referral\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
