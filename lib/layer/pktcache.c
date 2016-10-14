@@ -52,8 +52,6 @@ static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_quer
 	const knot_dname_t *qname = qry->sname;
 	uint16_t rrtype = qry->stype;
 	const bool want_secure = (qry->flags & QUERY_DNSSEC_WANT);
-	//return loot_cache_pkt(cache, pkt, qname, rrtype, want_secure, timestamp, flags);
-
 
 	struct kr_cache_entry entry;
 	entry.timestamp = qry->timestamp.tv_sec;
@@ -181,8 +179,7 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (!knot_wire_get_aa(pkt->wire) || knot_pkt_qclass(pkt) != KNOT_CLASS_IN) {
 		return ctx->state;
 	}
-	/* Cache only NODATA/NXDOMAIN or metatype/RRSIG or wildcard expanded answers.
-	 * FIXME: review after ECS */
+	/* Cache only NODATA/NXDOMAIN or metatype/RRSIG or wildcard expanded answers. */
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = (knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
 	const bool is_negative = kr_response_classify(pkt) & (PKT_NODATA|PKT_NXDOMAIN);
@@ -223,8 +220,8 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (entry.rank < KR_RANK_SECURE) {
 		struct kr_cache_entry cached;
 		cached.timestamp = entry.timestamp;
-		int err = kr_cache_peek(cache, NULL, KR_CACHE_PKT, qname, qtype, &cached);
-		if (!err && cached.rank > entry.rank) {
+		int ret = kr_cache_peek(cache, NULL, KR_CACHE_PKT, qname, qtype, &cached);
+		if (!ret && cached.rank > entry.rank) {
 			return ctx->state;
 		}
 	}

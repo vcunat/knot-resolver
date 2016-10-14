@@ -145,9 +145,9 @@ static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name,
 	/* Write tag + type */
 	uint8_t name_len = buf[0];
 	buf[0] = tag;
-	uint8_t *buf_now = buf + sizeof(uint8_t) + name_len;
-	memcpy(buf_now, &rrtype, sizeof(uint16_t));
-	buf_now += sizeof(uint16_t);
+	uint8_t *buf_now = buf + sizeof(tag) + name_len;
+	memcpy(buf_now, &rrtype, sizeof(rrtype));
+	buf_now += sizeof(rrtype);
 	if (ecs != NULL && ecs_lkey < 0) {
 		memcpy(buf_now, ecs->loc, ecs->loc_len);
 		buf_now += ecs->loc_len;
@@ -294,7 +294,6 @@ int kr_cache_peek(struct kr_cache *cache, const kr_ecs_t *ecs,
 {
 	bool precond = cache_isvalid(cache) && name && entry;
 	if (!precond) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 
@@ -519,7 +518,8 @@ static int peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *rr
 		rr->type = KNOT_RRTYPE_RRSIG;
 	}
 	rr->rrs.data = entry->data;
-	return kr_rdataset_count(rr->rrs.data, entry->data_len, &rr->rrs.rr_count);
+	ret = kr_rdataset_count(rr->rrs.data, entry->data_len, &rr->rrs.rr_count);
+	return ret;
 }
 int kr_cache_peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *rr,
 		     struct kr_cache_entry *entry)

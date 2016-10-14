@@ -102,7 +102,7 @@ static int loot_rrcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_query
 		qry->flags &= ~QUERY_DNSSEC_WANT;
 	/* Record may have RRSIG, try to find it. */
 	} else if (ret == 0 && dobit) {
-		ret = loot_rr(cache, pkt, qry->sname, qry->sclass, rrtype, qry, &entry, false);
+		ret = loot_rr(cache, pkt, qry->sname, qry->sclass, rrtype, qry, &entry, true);
 	}
 	return ret;
 }
