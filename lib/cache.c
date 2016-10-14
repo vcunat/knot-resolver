@@ -309,26 +309,27 @@ int kr_cache_peek(struct kr_cache *cache, const kr_ecs_t *ecs,
 }
 
 /** Serialize data. If it's RRs (incl. sigs), clear their TTLs and return the minimum. */
-static uint32_t serialize_data(const void *data, uint16_t len, uint8_t tag, uint8_t *dest)
+static uint32_t serialize_data(const uint8_t *data, uint16_t len, uint8_t tag,
+				uint8_t *dest)
 {
 	memcpy(dest, data, len);
 	if (tag != KR_CACHE_RR && tag != KR_CACHE_SIG) {
 		return 0;
 	}
 	knot_rdata_t *rd = dest;
-	uint32_t ttl = 0;
+	uint32_t ttl = -1;
 	for (; rd < dest + len; rd = kr_rdataset_next(rd)) {
 		ttl = MIN(ttl, knot_rdata_ttl(rd));
 		knot_rdata_set_ttl(rd, 0);
 	}
-	assert(dest + len == rd);
+	assert(dest + len == rd && ttl != -1);
 	return ttl;
 }
 static void entry2mm(const struct kr_cache_entry *src, uint32_t ttl, mmentry_t *dest)
 {
 	*dest = (mmentry_t){
 		.timestamp	= src->timestamp,
-		.ttl		= src->ttl ? src-> ttl : ttl,
+		.ttl		= src->ttl ? src->ttl : ttl,
 		.rank		= src->rank,
 		.flags		= src->flags,
 	};
@@ -368,17 +369,19 @@ int kr_cache_insert(struct kr_cache *cache, const kr_ecs_t *ecs, uint8_t tag,
 			if (ret != 0) {
 				return ret;
 			}
+			mmentry_t *mme = value.data;
 			uint32_t ttl = serialize_data(entry->data, entry->data_len,
-							tag, value.data);
-			entry2mm(entry, ttl, value.data);
+							tag, mme->data);
+			entry2mm(entry, ttl, mme);
 			ret = cache_op(cache, sync); /* Make sure the entry is committed. */
 		} else {
 			/* Other backends must prepare contiguous data first */
 			char buf[value.len];
 			value.data = buf;
+			mmentry_t *mme = value.data;
 			uint32_t ttl = serialize_data(entry->data, entry->data_len,
-							tag, value.data);
-			entry2mm(entry, ttl, value.data);
+							tag, mme->data);
+			entry2mm(entry, ttl, mme);
 			ret = cache_op(cache, write, &key, &value, 1);
 		}
 
@@ -487,11 +490,12 @@ static int kr_rdataset_count(const knot_rdata_t *data, uint16_t len, uint16_t *c
 {
 	const knot_rdata_t *rd = data;
 	int cnt = 0;
-	while (data + len < rd) {
-		rd = kr_rdataset_next((knot_rdata_t *)rd);
+	while (rd < data + len) {
+		rd = kr_rdataset_next(/*const-cast*/(knot_rdata_t *)rd);
 		++cnt;
 	}
-	if (data + len != rd) {
+	if (rd != data + len) {
+		kr_log_debug("[cache] ignored bogus rrset from cache.\n");
 		return kr_error(EILSEQ);
 	}
 	*count = cnt;
