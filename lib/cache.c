@@ -174,8 +174,8 @@ static int check_lifetime(mmentry_t *found, uint32_t *timestamp)
 		return kr_ok();
 	} else if (*timestamp < found->timestamp) {
 		/* John Connor record cached in the future. */
-		kr_log_debug("[cache] used record cached %PRIu32 s in future.\n",
-				found->timestamp - *timestamp);
+		/* Even a sub-query can commonly make that happen with 1s difference,
+		 * as we only use the timestamp of the original request. */
 		*timestamp = 0;
 		return kr_ok();
 	} else {
