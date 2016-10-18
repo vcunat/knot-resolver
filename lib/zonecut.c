@@ -379,10 +379,13 @@ static int fetch_rrset(knot_rrset_t **rr, struct kr_cache *cache,
 		return ret;
 	}
 
-	knot_rrset_free(rr, pool);
-	*rr = mm_alloc(pool, sizeof(knot_rrset_t));
 	if (*rr == NULL) {
-		return kr_error(ENOMEM);
+		*rr = mm_alloc(pool, sizeof(knot_rrset_t));
+		if (*rr == NULL) {
+			return kr_error(ENOMEM);
+		}
+	} else {
+		knot_rrset_clear(*rr, pool);
 	}
 
 	ret = kr_cache_materialize(&cached_rr, &entry, pool);
