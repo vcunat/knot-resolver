@@ -128,15 +128,19 @@ void kr_cache_sync(struct kr_cache *cache)
 }
 
 /**
- * @internal Composed key as { u8 tag, u8[1-255] name, u16 type,
- * either (u8[0-2] location) or (u8 '\0' and u16 hash) }
+ * @internal The key starts by { u8 tag, u8[1-255] name in LF, u16 type }.
+ *
  * The name is lowercased and label order is reverted for easy prefix search.
  * e.g. '\x03nic\x02cz\x00' is saved as 'cz\x00nic\x00'
+ *
+ * In case of ECS the key is extended either by:
+ *  - u8[1-2] location code, in case of location->hash entry; or by
+ *  - u8 '\0' and u16 hash, in case of hash->data entry.
  */
 static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name,
 			uint16_t rrtype, const kr_ecs_t *ecs, int32_t ecs_lkey)
 {
-	/* Convert to lookup format */
+	/* Convert name to lookup format */
 	int ret = knot_dname_lf(buf, name, NULL);
 	if (ret != 0) {
 		assert(false);
@@ -148,6 +152,8 @@ static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name,
 	uint8_t *buf_now = buf + sizeof(tag) + name_len;
 	memcpy(buf_now, &rrtype, sizeof(rrtype));
 	buf_now += sizeof(rrtype);
+
+	/* ECS-specific handling now */
 	if (ecs != NULL && ecs_lkey < 0) {
 		memcpy(buf_now, ecs->loc, ecs->loc_len);
 		buf_now += ecs->loc_len;
@@ -494,7 +500,7 @@ static int kr_rdataset_count(const knot_rdata_t *data, uint16_t len, uint16_t *c
 		++cnt;
 	}
 	if (rd != data + len) {
-		kr_log_debug("[cache] ignored bogus rrset from cache.\n");
+		kr_log_debug("[cach] ignored bogus rrset from cache.\n");
 		return kr_error(EILSEQ);
 	}
 	*count = cnt;

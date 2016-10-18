@@ -311,6 +311,7 @@ static void fetch_addr(struct kr_zonecut *cut, struct kr_cache *cache, const kno
 
 	knot_rdata_t *rd = cached_rr.rrs.data;
 	for (uint16_t i = 0; i < cached_rr.rrs.rr_count; ++i) {
+		/* Note: dependency on kr_cache_materialize *implementation*. */
 		uint32_t ttl = knot_rdata_ttl(rd);
 		if (!ttl || ttl >= entry.timestamp/*drift*/) {
 			(void) kr_zonecut_add(cut, ns, rd);
