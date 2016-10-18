@@ -76,7 +76,12 @@ struct kr_query {
 	struct kr_zonecut zone_cut;
 	struct kr_nsrep ns;
 	struct kr_layer_pickle *deferred;
-	struct kr_ecs *ecs; /*!< Data related to client subnet EDNS. */
+
+	/** Data related to client subnet EDNS.  Memory owned by the request.
+	 * @note The value can change to NULL and back, depending on which
+	 * 	sub-query of this query is processed currently.
+	 * TODO: perhaps rename to current_ecs */
+	struct kr_ecs *ecs;
 };
 
 /** @cond internal Array of queries. */

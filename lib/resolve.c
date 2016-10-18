@@ -437,6 +437,7 @@ int kr_resolve_begin(struct kr_request *request, struct kr_context *ctx, knot_pk
 
 	/* Expect first query */
 	kr_rplan_init(&request->rplan, request, &request->pool);
+	request->ecs = NULL;
 	return KNOT_STATE_CONSUME;
 }
 

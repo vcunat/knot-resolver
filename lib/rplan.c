@@ -64,7 +64,7 @@ static void query_free(knot_mm_t *pool, struct kr_query *qry)
 {
 	kr_zonecut_deinit(&qry->zone_cut);
 	mm_free(pool, qry->sname);
-	mm_free(pool, qry->ecs);
+	/* qry->ecs is NOT owned */
 	mm_free(pool, qry);
 }
 

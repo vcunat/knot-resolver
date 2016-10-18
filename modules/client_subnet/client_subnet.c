@@ -19,11 +19,6 @@ typedef struct kr_ecs data_t;
 static int begin(knot_layer_t *ctx, void *module_param)
 {
 	(void)module_param;
-	struct kr_module *module = ctx->api->data;
-	MMDB_s *mmdb = module->data;
-	if (!mmdb->filename) /* DB not loaded successfully; go without ECS. */
-		return kr_ok();
-
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
 	assert(!qry->parent && !qry->ecs);
@@ -31,8 +26,14 @@ static int begin(knot_layer_t *ctx, void *module_param)
 	if (qry->sclass != KNOT_CLASS_IN)
 		return kr_ok();
 
+	struct kr_module *module = ctx->api->data;
+	MMDB_s *mmdb = module->data;
+	if (!mmdb->filename) /* DB not loaded successfully; go without ECS. */
+		return kr_ok();
+
 	data_t *data = mm_alloc(&req->pool, sizeof(data_t));
 	qry->ecs = data;
+	req->ecs = data;
 
 	/* TODO: the RFC requires in 12.1 that we should avoid ECS on public suffixes
 	 * https://publicsuffix.org but we only check very roughly (number of labels).
@@ -173,6 +174,9 @@ const knot_layer_api_t *client_subnet_layer(struct kr_module *module)
 	static knot_layer_api_t _layer = {
 		.begin = begin,
 		.data = NULL,
+		/* FIXME: add functions for produce and consume,
+		 * and check whether the current sub-query is ECS-worthy
+		 * and set qry->ecs either to NULL or req->ecs */
 	};
 
 	_layer.data = module;

@@ -350,6 +350,16 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (qry->flags & QUERY_CACHED || knot_wire_get_rcode(pkt->wire) != KNOT_RCODE_NOERROR || !is_eligible) {
 		return ctx->state;
 	}
+
+	{
+		char buf[80];
+		DEBUG_MSG(qry, "=> stash starting\n", buf);
+		if (!qry->parent)
+			DEBUG_MSG(qry, "   no parent\n");
+		if (knot_dname_to_str(buf, qry->sname, sizeof(buf)))
+			DEBUG_MSG(qry, "   sname: %s\n", buf);
+	}
+
 	/* Stash in-bailiwick data from the AUTHORITY and ANSWER. */
 	map_t stash = map_make();
 	stash.malloc = (map_alloc_f) mm_alloc;
@@ -378,6 +388,12 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 		if (ret == kr_ok()) {
 			DEBUG_MSG(qry, "=> RRs cached\n");
 			report_ecs_location(qry);
+
+			char buf[80];
+			if (!qry->parent)
+				DEBUG_MSG(qry, "   no parent\n");
+			if (knot_dname_to_str(buf, qry->sname, sizeof(buf)))
+				DEBUG_MSG(qry, "   sname: %s\n", buf);
 		}
 		/* Clear if full */
 		if (ret == kr_error(ENOSPC)) {

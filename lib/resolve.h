@@ -132,6 +132,7 @@ struct kr_request {
     rr_array_t authority;
     rr_array_t additional;
     struct kr_rplan rplan;
+    struct kr_ecs *ecs;                /**< Data related to client subnet EDNS. */
     knot_mm_t pool;
 };
 

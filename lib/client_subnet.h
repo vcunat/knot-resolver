@@ -2,6 +2,8 @@
 
 #include <libknot/rrtype/opt.h>
 
+#include "lib/rplan.h"
+
 /*! Data for ECS handling, to reside in struct kr_query::ecs.
  *
  * A (kr_ecs_t *)NULL means that no ECS should be done nor answered. */
@@ -19,3 +21,18 @@ typedef struct kr_ecs {
 #define ECS_LOC_FMT(ecs) \
 	((ecs)->loc_len == 2 ? "%c%c" : ((ecs)->loc_len == 0 ? "none" : "/0")) \
 	, (ecs)->loc[0], (ecs)->loc[1]
+
+
+static inline kr_ecs_t * kr_ecs_get(const struct kr_query *qry) {
+#if 0
+	assert(qry);
+	if (!qry->ecs) /* first check the typical case */
+		return NULL;
+	if (qry->parent)
+		return NULL;
+	return qry->ecs;
+#endif
+	assert(false);
+	return NULL;
+}
+
