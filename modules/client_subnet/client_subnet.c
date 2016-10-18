@@ -11,7 +11,7 @@
 #include "lib/rplan.h"
 #include "lib/utils.h"
 
-#define MSG(type, fmt...) kr_log_##type ("[module client subnet]: " fmt)
+#define MSG(type, fmt...) kr_log_##type ("[mecs] " fmt)
 
 typedef struct kr_ecs data_t;
 
@@ -23,13 +23,10 @@ static int begin(knot_layer_t *ctx, void *module_param)
 	MMDB_s *mmdb = module->data;
 	if (!mmdb->filename) /* DB not loaded successfully; go without ECS. */
 		return kr_ok();
-	// FIXME: TMP DEBUG
-	//kr_log_info("[module client_subnet]: db %s\n", mmdb->filename);
 
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
 	assert(!qry->parent && !qry->ecs);
-	//kr_log_info("[module client_subnet]: qry %s\n", qry->sname);
 
 	if (qry->sclass != KNOT_CLASS_IN)
 		return kr_ok();
@@ -94,6 +91,7 @@ static int begin(knot_layer_t *ctx, void *module_param)
 		goto err_not_found;
 	data->loc_len = entry.data_size;
 	memcpy(data->loc, entry.utf8_string, data->loc_len);
+	MSG(debug, "geo DB located query in: %c%c\n", data->loc[0], data->loc[1]);
 
 	/* Esure data->query_ecs contains correct address, source_len, and also
 	 * scope_len for answer. We take the prefix lengths from the database. */
@@ -151,12 +149,12 @@ static int load(struct kr_module *module, const char *db_path)
 	assert(mmdb);
 	int err = MMDB_open(db_path, 0/*defaults*/, mmdb);
 	if (!err) {
-		kr_log_info("[module client_subnet]: geo DB loaded succesfully\n");
+		MSG(debug, "geo DB loaded succesfully\n");
 		return kr_ok();
 	}
 	mmdb->filename = NULL;
-	kr_log_error("[module client_subnet]: failed to open the database\n");
-	return kr_error(999/*TODO: no suitable code?*/);
+	MSG(error, "failed to open the database\n");
+	return kr_error(EIO);
 }
 
 static void unload(struct kr_module *module)

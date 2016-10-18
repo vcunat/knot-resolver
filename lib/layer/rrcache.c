@@ -26,6 +26,7 @@
 
 #include "lib/layer/iterate.h"
 #include "lib/cache.h"
+#include "lib/client_subnet.h"
 #include "lib/module.h"
 #include "lib/utils.h"
 #include "lib/resolve.h"
@@ -107,6 +108,14 @@ static int loot_rrcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_query
 	return ret;
 }
 
+static void report_ecs_location(/*const*/ struct kr_query *qry) {
+	if (qry->ecs) {
+		DEBUG_MSG(qry, "=> client subnet location: ");
+		kr_log_debug(ECS_LOC_FMT(qry->ecs));
+		kr_log_debug("\n");
+	}
+}
+
 static int rrcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 {
 	struct kr_request *req = ctx->data;
@@ -138,6 +147,7 @@ static int rrcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	if (ret == 0) {
 		DEBUG_MSG(qry, "=> satisfied from cache\n");
+		report_ecs_location(qry);
 		qry->flags |= QUERY_CACHED|QUERY_NO_MINIMIZE;
 		pkt->parsed = pkt->size;
 		knot_wire_set_qr(pkt->wire);
@@ -365,9 +375,16 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 		/* Open write transaction */
 		struct kr_cache *cache = &req->ctx->cache;
 		ret = stash_commit(&stash, qry, cache, req);
+		if (ret == kr_ok()) {
+			DEBUG_MSG(qry, "=> RRs cached\n");
+			report_ecs_location(qry);
+		}
 		/* Clear if full */
 		if (ret == kr_error(ENOSPC)) {
 			ret = kr_cache_clear(cache);
+			if (ret == 0) {
+				kr_log_info("[cache] purged due to being full\n");
+			}
 			if (ret != 0 && ret != kr_error(EEXIST)) {
 				kr_log_error("[cache] failed to clear cache: %s\n", kr_strerror(ret));
 			}

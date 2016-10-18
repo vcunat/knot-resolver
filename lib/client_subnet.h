@@ -16,3 +16,6 @@ typedef struct kr_ecs {
 	uint8_t loc_len; /*!< The length of loc. */
 } kr_ecs_t;
 
+#define ECS_LOC_FMT(ecs) \
+	((ecs)->loc_len == 2 ? "%c%c" : ((ecs)->loc_len == 0 ? "none" : "/0")) \
+	, (ecs)->loc[0], (ecs)->loc[1]
