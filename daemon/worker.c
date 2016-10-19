@@ -262,6 +262,8 @@ static struct qr_task *qr_task_create(struct worker_ctx *worker, uv_handle_t *ha
 	task->req.qsource.key = NULL;
 	task->req.qsource.addr = NULL;
 	task->req.qsource.dst_addr = NULL;
+	task->req.qsource.packet = NULL;
+	task->req.qsource.opt = NULL;
 	/* Remember query source addr */
 	if (addr) {
 		size_t addr_len = sizeof(struct sockaddr_in);
@@ -918,7 +920,12 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle, const uin
 	 * to buffer incoming message until it's complete. */
 	if (!session->outgoing) {
 		if (!task) {
-			task = qr_task_create(worker, (uv_handle_t *)handle, NULL);
+			/* Get TCP peer name, keep zeroed address if it fails. */
+			struct sockaddr_storage addr;
+			memset(&addr, 0, sizeof(addr));
+			int addr_len = sizeof(addr);
+			uv_tcp_getpeername((uv_tcp_t *)handle, (struct sockaddr *)&addr, &addr_len);
+			task = qr_task_create(worker, (uv_handle_t *)handle, (struct sockaddr *)&addr);
 			if (!task) {
 				return kr_error(ENOMEM);
 			}
