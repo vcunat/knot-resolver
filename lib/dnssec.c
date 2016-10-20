@@ -140,7 +140,7 @@ int kr_rrset_validate(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *cover
 
 	for (unsigned i = 0; i < vctx->keys->rrs.rr_count; ++i) {
 		int ret = kr_rrset_validate_with_key(vctx, covered, i, NULL);
-		if (ret == 0) {
+		if (ret == 0 || ret == kr_error(EFAULT)) {
 			return ret;
 		}
 	}
@@ -158,7 +158,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 	const knot_dname_t *zone_name = vctx->zone_name;
 	uint32_t timestamp            = vctx->timestamp;
 	bool has_nsec3		      = vctx->has_nsec3;
-	bool owner_type_matched	      = false;
+	bool bad_signature	      = false;
 	struct dseckey *created_key = NULL;
 	if (key == NULL) {
 		const knot_rdata_t *krr = knot_rdataset_at(&keys->rrs, key_pos);
@@ -192,7 +192,6 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 			if (knot_rrsig_type_covered(&rrsig->rrs, j) != covered->type) {
 				continue;
 			}
-			owner_type_matched = true;
 			if (validate_rrsig_rr(&val_flgs, covered_labels, rrsig, j,
 			                      keys, key_pos, keytag,
 			                      zone_name, timestamp) != 0) {
@@ -205,6 +204,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 				}
 			}
 			if (kr_check_signature(rrsig, j, (dnssec_key_t *) key, covered, trim_labels) != 0) {
+				bad_signature = true;
 				continue;
 			}
 			if (val_flgs & FLG_WILDCARD_EXPANSION) {
@@ -226,7 +226,7 @@ int kr_rrset_validate_with_key(kr_rrset_validation_ctx_t *vctx,
 	}
 	/* No applicable key found, cannot be validated. */
 	kr_dnssec_key_free(&created_key);
-	return owner_type_matched ? kr_error(EFAULT) : kr_error(ENOENT);
+	return bad_signature ? kr_error(EFAULT) : kr_error(ENOENT);
 }
 
 int kr_dnskeys_trusted(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *ta)
