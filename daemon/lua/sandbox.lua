@@ -1,3 +1,5 @@
+require("rlcompleter")
+
 -- Units
 kB = 1024
 MB = 1024*kB
