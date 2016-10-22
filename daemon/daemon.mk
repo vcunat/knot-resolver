@@ -37,6 +37,12 @@ kresd_CFLAGS += -DHAS_SYSTEMD
 kresd_LIBS += $(libsystemd_LIBS)
 endif
 
+# Enable lua completion
+ifeq ($(HAS_libedit)$(HAS_ncurses), yesyes)
+kresd_SOURCES += daemon/rlcompleter.c
+kresd_LIBS += $(libedit_LIBS) $(ncurses_LIBS)
+endif
+
 # Make binary
 ifeq ($(HAS_lua)|$(HAS_libuv), yes|yes)
 $(eval $(call make_sbin,kresd,daemon,yes))
