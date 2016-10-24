@@ -31,7 +31,6 @@ $(eval $(call find_lib,socket_wrapper))
 $(eval $(call find_lib,libsystemd,227))
 $(eval $(call find_lib,gnutls))
 $(eval $(call find_lib,libedit))
-$(eval $(call find_lib,ncurses))
 
 # Lookup SONAME
 $(eval $(call find_soname,libknot))
@@ -122,7 +121,6 @@ info:
 	$(info [$(HAS_cmocka)] cmocka (tests/unit))
 	$(info [$(HAS_libsystemd)] systemd (daemon))
 	$(info [$(HAS_libedit)] libedit (lua completion))
-	$(info [$(HAS_ncurses)] ncurses (lua completion))
 	$(info )
 
 ifeq ($(HAS_libknot),no)

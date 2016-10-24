@@ -464,6 +464,9 @@ static int init_resolver(struct engine *engine)
 	return array_push(engine->backends, kr_cdb_lmdb());
 }
 
+/** Init the editline completer; implemented in ./rlcompleter.c */
+int luaopen_rlcompleter_c(lua_State *L);
+
 static int init_state(struct engine *engine)
 {
 	/* Initialize Lua state */
@@ -473,6 +476,7 @@ static int init_state(struct engine *engine)
 	}
 	/* Initialize used libraries. */
 	lua_gc(engine->L, LUA_GCSTOP, 0);
+	luaopen_rlcompleter_c(engine->L);
 	luaL_openlibs(engine->L);
 	/* Global functions */
 	lua_pushcfunction(engine->L, l_help);

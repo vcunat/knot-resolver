@@ -8,7 +8,7 @@ kresd_SOURCES := \
 	daemon/tls.c         \
 	daemon/main.c
 
-kresd_DIST := daemon/lua/kres.lua daemon/lua/trust_anchors.lua
+kresd_DIST := daemon/lua/kres.lua daemon/lua/trust_anchors.lua daemon/lua/rlcompleter.lua
 
 # Embedded resources
 %.inc: %.lua
@@ -38,9 +38,9 @@ kresd_LIBS += $(libsystemd_LIBS)
 endif
 
 # Enable lua completion
-ifeq ($(HAS_libedit)$(HAS_ncurses), yesyes)
+ifeq ($(HAS_libedit), yes)
 kresd_SOURCES += daemon/rlcompleter.c
-kresd_LIBS += $(libedit_LIBS) $(ncurses_LIBS)
+kresd_LIBS += $(libedit_LIBS)
 endif
 
 # Make binary
