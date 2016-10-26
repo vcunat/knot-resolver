@@ -1,0 +1,28 @@
+variables:
+  - PKG_CONFIG_PATH: "${HOME}/.local/lib/pkgconfig"
+  - PATH: "${HOME}/.local/bin:/usr/local/bin:${PATH}"
+  - CFLAGS: "-O2 -g -fno-omit-frame-pointer -DDEBUG"
+  - LD_LIBRARY_PATH: "${HOME}/.local/lib"
+before_script:
+  - BOOTSTRAP_CLEANUP=1 ./scripts/bootstrap-depends.sh ${HOME}/.local
+stages:
+  - build
+  - test
+
+job1:
+  stage: build
+  script:
+    - make -j2 all V=1 COVERAGE=1 PREFIX=${HOME}/.local
+    - ./daemon/kresd -h
+    - ./daemon/kresd -V
+    - echo "quit()" | ./daemon/kresd -a 127.0.0.1#53535 .
+  cache:
+    paths:
+      - ${HOME}/.local
+      - ${HOME}/.cache/pip
+
+job2:
+  stage: test
+  script:
+    - make check V=1 COVERAGE=1 PREFIX=${HOME}/.local
+    - make -j2 check-integration COVERAGE=1 PREFIX=${HOME}/.local
