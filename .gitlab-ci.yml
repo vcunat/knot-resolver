@@ -1,8 +1,8 @@
 variables:
-  - PKG_CONFIG_PATH: "${HOME}/.local/lib/pkgconfig"
-  - PATH: "${HOME}/.local/bin:/usr/local/bin:${PATH}"
-  - CFLAGS: "-O2 -g -fno-omit-frame-pointer -DDEBUG"
-  - LD_LIBRARY_PATH: "${HOME}/.local/lib"
+  PKG_CONFIG_PATH: "${HOME}/.local/lib/pkgconfig"
+  PATH: "${HOME}/.local/bin:/usr/local/bin:${PATH}"
+  CFLAGS: "-O2 -g -fno-omit-frame-pointer -DDEBUG"
+  LD_LIBRARY_PATH: "${HOME}/.local/lib"
 before_script:
   - apt-get update -qq && apt-get build-dep -y knot-resolver
 stages:
