@@ -4,7 +4,7 @@ variables:
   - CFLAGS: "-O2 -g -fno-omit-frame-pointer -DDEBUG"
   - LD_LIBRARY_PATH: "${HOME}/.local/lib"
 before_script:
-  - BOOTSTRAP_CLEANUP=1 ./scripts/bootstrap-depends.sh ${HOME}/.local
+  - apt-get update -qq && apt-get build-dep -y knot-resolver
 stages:
   - build
   - test
