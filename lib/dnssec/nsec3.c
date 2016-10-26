@@ -744,7 +744,7 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 				 */
 				continue;
 			}
-			bool nsec3_found = true;
+			nsec3_found = true;
 			knot_nsec3_bitmap(&nsec3->rrs, 0, &bm, &bm_size);
 			if (!bm) {
 				return kr_error(EINVAL);
