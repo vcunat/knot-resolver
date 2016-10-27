@@ -203,8 +203,10 @@ static int commit_rr(const char *key, void *val, void *data)
 	 * it may be present in an otherwise secure answer but it
 	 * is only a hint for local state. */
 	if (rr->type != KNOT_RRTYPE_NS || (rank & KR_RANK_AUTH)) {
-	 	if (baton->qry->flags & QUERY_DNSSEC_WANT)
+		if (baton->qry->flags & QUERY_DNSSEC_WANT &&
+		    rank != KR_RANK_BAD) {
 			rank |= KR_RANK_SECURE;
+		}
 	}
 	if (baton->qry->flags & QUERY_DNSSEC_INSECURE && rank != KR_RANK_BAD) {
 		rank |= KR_RANK_INSECURE;
@@ -371,9 +373,6 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = !(knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
 	if (qry->flags & QUERY_CACHED || knot_wire_get_rcode(pkt->wire) != KNOT_RCODE_NOERROR || !is_eligible) {
-		return ctx->state;
-	}
-	if (knot_pkt_has_dnssec(req->answer) && knot_wire_get_cd(req->answer->wire)) {
 		return ctx->state;
 	}
 	/* Stash in-bailiwick data from the AUTHORITY and ANSWER. */
