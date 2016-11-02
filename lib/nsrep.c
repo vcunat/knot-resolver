@@ -189,7 +189,9 @@ int kr_nsrep_set(struct kr_query *qry, size_t index, uint8_t *addr, size_t addr_
 	/* Retrieve RTT from cache */
 	if (addr && addr_len > 0) {
 		struct kr_context *ctx = qry->ns.ctx;
-		unsigned *score = ctx ? lru_get(ctx->cache_rtt, (const char *)addr, addr_len) : NULL;
+		unsigned *score = ctx
+			? lru_get_try(ctx->cache_rtt, (const char *)addr, addr_len)
+			: NULL;
 		if (score) {
 			qry->ns.score = MIN(qry->ns.score, *score);
 		}
