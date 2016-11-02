@@ -58,7 +58,11 @@ KR_EXPORT void lru_free_items_impl(struct lru *lru)
 /** @internal See lru_apply. */
 KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 {
-	assert(lru && f);
+	bool ok = lru && f;
+	if (!ok) {
+		assert(false);
+		return;
+	}
 	for (size_t i = 0; i < (1 << (size_t)lru->log_groups); ++i) {
 		lru_group_t *g = &lru->groups[i];
 		for (uint j = 0; j < LRU_ASSOC; ++j) {
@@ -85,6 +89,8 @@ KR_EXPORT void lru_apply_impl(struct lru *lru, lru_apply_fun f, void *baton)
 KR_EXPORT struct lru * lru_create_impl(uint max_slots, knot_mm_t *mm_array, knot_mm_t *mm)
 {
 	assert(max_slots);
+	if (!max_slots)
+		return NULL;
 	// let lru->log_groups = ceil(log2(max_slots / (float) assoc))
 	//   without trying for efficiency
 	uint group_count = (max_slots - 1) / LRU_ASSOC + 1;
@@ -129,8 +135,12 @@ static void group_inc_count(lru_group_t *g, int i) {
 KR_EXPORT void * lru_get_impl(struct lru *lru, const char *key, uint key_len,
 				uint val_len, bool do_insert)
 {
-	assert(lru && (key || !key_len) && key_len <= UINT16_MAX
-		   && (!do_insert || val_len <= UINT16_MAX));
+	bool ok = lru && (key || !key_len) && key_len <= UINT16_MAX
+		   && (!do_insert || val_len <= UINT16_MAX);
+	if (!ok) {
+		assert(false);
+		return NULL; // reasonable fallback when not debugging
+	}
 	// find the right group
 	uint32_t khash = hash(key, key_len);
 	uint16_t khash_top = khash >> 16;
