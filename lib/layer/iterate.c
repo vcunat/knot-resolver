@@ -275,7 +275,6 @@ static int pick_authority(knot_pkt_t *pkt, struct kr_request *req, bool to_wire)
 {
 	struct kr_query *qry = req->current_query;
 	const knot_pktsection_t *ns = knot_pkt_section(pkt, KNOT_AUTHORITY);
-
 	uint8_t rank = !(qry->flags & QUERY_DNSSEC_WANT) || (qry->flags & QUERY_CACHED) ?
 			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
 	const knot_dname_t *zonecut_name = qry->zone_cut.name;
@@ -295,7 +294,7 @@ static int pick_authority(knot_pkt_t *pkt, struct kr_request *req, bool to_wire)
 			continue;
 		}
 		int ret = kr_ranked_rrarray_add(&req->auth_selected, rr,
-						rank, to_wire, &req->pool);
+						rank, to_wire, qry->id, &req->pool);
 		if (ret != kr_ok()) {
 			return ret;
 		}
@@ -357,25 +356,6 @@ static void finalize_answer(knot_pkt_t *pkt, struct kr_query *qry, struct kr_req
 	/* Finalize header */
 	knot_pkt_t *answer = req->answer;
 	knot_wire_set_rcode(answer->wire, knot_wire_get_rcode(pkt->wire));
-
-	/* Stash the authority records, they will be written to wire on answer finalization. */
-	const bool scrub_dnssec = !knot_pkt_has_dnssec(answer);
-	const uint16_t qtype = knot_pkt_qtype(answer);
-	int pkt_class = kr_response_classify(pkt);
-	if ((pkt_class & (PKT_NXDOMAIN|PKT_NODATA))) {
-		for (size_t i = 0; i < req->auth_selected.len; ++i) {
-			ranked_rr_array_entry_t *entry = req->auth_selected.at[i];
-			if (!entry->to_wire) {
-				continue;
-			}
-
-			knot_rrset_t *rr = req->auth_selected.at[i]->rr;
-			if (scrub_dnssec && rr->type != qtype && knot_rrtype_is_dnssec(rr->type)) {
-				continue;
-			}
-			array_push(req->authority, rr);
-		}
-	}
 }
 
 static bool is_rrsig_type_covered(const knot_rrset_t *rr, uint16_t type)
@@ -432,7 +412,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 				}
 			}
 			state = kr_ranked_rrarray_add(&req->answ_selected, rr,
-						      rank, to_wire, &req->pool);
+						      rank, to_wire, query->id, &req->pool);
 			if (state != kr_ok()) {
 				return KNOT_STATE_FAIL;
 			}
@@ -528,7 +508,8 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 				    (rr->type != query->stype)) {
 					continue;
 				}
-				state = pick_authority(pkt, req, true);
+				bool to_wire = ((pkt_class & (PKT_NXDOMAIN|PKT_NODATA)) != 0);
+				state = pick_authority(pkt, req, to_wire);
 				if (state != kr_ok()) {
 					return KNOT_STATE_FAIL;
 				}

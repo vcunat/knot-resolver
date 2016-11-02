@@ -416,7 +416,7 @@ static int answer_finalize(struct kr_request *request, int state)
 	if (answer->current < KNOT_AUTHORITY) {
 		knot_pkt_begin(answer, KNOT_AUTHORITY);
 	}
-	write_extra_records(&request->authority, answer);
+	write_extra_ranked_records(&request->auth_selected, answer);
 	/* Write additional records. */
 	knot_pkt_begin(answer, KNOT_ADDITIONAL);
 	/* Write EDNS information */
@@ -478,7 +478,6 @@ int kr_resolve_begin(struct kr_request *request, struct kr_context *ctx, knot_pk
 	request->options = ctx->options;
 	request->state = KNOT_STATE_CONSUME;
 	request->current_query = NULL;
-	array_init(request->authority);
 	array_init(request->additional);
 	array_init(request->answ_selected);
 	array_init(request->auth_selected);

@@ -237,7 +237,6 @@ struct kr_request {
 	int state;
 	ranked_rr_array_t answ_selected;
 	ranked_rr_array_t auth_selected;
-	rr_array_t authority;
 	rr_array_t additional;
 	uint8_t _stub[]; /* Do not touch */
 };
