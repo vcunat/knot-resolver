@@ -107,7 +107,7 @@ static struct key * read_lines(const char *fname, size_t *count, char **pfree)
 		die("read");
 	close(fd);
 	fbuf[flen] = '\0';
-	
+
 	// get pointers to individual lines
 	size_t lines = 0;
 	for (size_t i = 0; i < flen; ++i)
