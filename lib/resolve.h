@@ -140,7 +140,6 @@ struct kr_request {
 	int state;
 	ranked_rr_array_t answ_selected;
 	ranked_rr_array_t auth_selected;
-	rr_array_t authority;
 	rr_array_t additional;
 	struct kr_rplan rplan;
 	knot_mm_t pool;

@@ -413,18 +413,19 @@ int kr_rrarray_add(rr_array_t *array, const knot_rrset_t *rr, knot_mm_t *pool)
 }
 
 int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
-			  uint8_t rank, bool to_wire, knot_mm_t *pool)
+			  uint8_t rank, bool to_wire, uint16_t qry_id, knot_mm_t *pool)
 {
 	/* Check if exists */
-	for (size_t i = 0; i < array->len; ++i) {
+	for (ssize_t i = array->len - 1; i >= 0; --i) {
 		ranked_rr_array_entry_t *stashed = array->at[i];
-		if (stashed->rank == rank &&
-		    stashed->cached == false &&
-		    stashed->yielded == false &&
-		    stashed->to_wire == to_wire &&
+		if (stashed->qry_id == qry_id &&
 		    stashed->rr->rclass == rr->rclass &&
 		    stashed->rr->type == rr->type &&
 		    knot_dname_is_equal(stashed->rr->owner, rr->owner)) {
+			assert(stashed->rank == rank &&
+			       stashed->cached == false &&
+			       stashed->yielded == false &&
+			       stashed->to_wire == to_wire);
 			/* Merge */
 			return knot_rdataset_merge(&stashed->rr->rrs, &rr->rrs, pool);
 		}
@@ -444,6 +445,7 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 	if (!copy) {
 		return kr_error(ENOMEM);
 	}
+	entry->qry_id = qry_id;
 	entry->rr = copy;
 	entry->rank = rank;
 	entry->cached = false;
@@ -452,6 +454,18 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 	array_push(*array, entry);
 	return kr_ok();
 }
+
+int kr_ranked_rrarray_set_wire(ranked_rr_array_t *array, bool to_wire, uint16_t qry_id)
+{
+	for (size_t i = 0; i < array->len; ++i) {
+		ranked_rr_array_entry_t *entry = array->at[i];
+		if (entry->qry_id == qry_id) {
+			entry->to_wire = to_wire;
+		}
+	}
+	return kr_ok();
+}
+
 
 static char *callprop(struct kr_module *module, const char *prop, const char *input, void *env)
 {

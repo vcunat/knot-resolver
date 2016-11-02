@@ -79,6 +79,7 @@ struct kr_context;
 typedef array_t(knot_rrset_t *) rr_array_t;
 struct ranked_rr_array_entry {
 	uint8_t rank;
+	uint16_t qry_id;
 	bool cached;
 	bool yielded;
 	bool to_wire;
@@ -172,7 +173,9 @@ int kr_rrarray_add(rr_array_t *array, const knot_rrset_t *rr, knot_mm_t *pool);
 
 /** @internal Add RRSet copy to ranked RR array. */
 int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
-			  uint8_t rank, bool to_wire, knot_mm_t *pool);
+			  uint8_t rank, bool to_wire, uint16_t qry_id, knot_mm_t *pool);
+
+int kr_ranked_rrarray_set_wire(ranked_rr_array_t *array, bool to_wire, uint16_t qry);
 
 /**
  * Call module property.

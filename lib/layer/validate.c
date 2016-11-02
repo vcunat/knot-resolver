@@ -395,7 +395,7 @@ static int check_validation_result(struct kr_request *req, ranked_rr_array_t *ar
 		if (entry->rank == KR_VLDRANK_MISMATCH) {
 			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
 			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
-			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+			DEBUG_MSG(qry, ">< cut changed (new signer), needs revalidation\n");
 			return KNOT_STATE_YIELD;
 		}
 	}
@@ -407,31 +407,44 @@ static int check_validation_result(struct kr_request *req, ranked_rr_array_t *ar
 		}
 		const knot_rrset_t *rr = entry->rr;
 		if (entry->rank == KR_VLDRANK_INSECURE) {
-			/* No RRSIG found. Perhaps out-of-zone CNAME.
-			 * Get common ancestor and ask for DS. */
 			int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
 			int owner_labels = knot_dname_labels(rr->owner, NULL);
-			int skip_labels = owner_labels - matched_labels - 1;
+			int skip_labels = owner_labels - matched_labels;
+			if (!skip_labels) {
+				DEBUG_MSG(qry, ">< no RRSIGs found\n");
+				return KNOT_STATE_FAIL;
+			} else {
+				DEBUG_MSG(qry, ">< no RRSIGs found, cut changed\n");
+			}
+
+			struct kr_query *next = kr_rplan_push(&req->rplan, qry, rr->owner,
+							      rr->rclass, KNOT_RRTYPE_RRSIG);
+			if (!next) {
+				return KNOT_STATE_FAIL;
+			}
+
 			const knot_dname_t *new_cut_name_start = rr->owner;
 			while (skip_labels--) {
 				new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
 			}
-			/* try to find the name wanted among ancestors */
 			struct kr_zonecut *cut = &qry->zone_cut;
 			bool cut_found = false;
-			do {
+			while (cut->parent) {
 				cut = cut->parent;
 				if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
 					cut_found = true;
-					memcpy(&qry->zone_cut, cut, sizeof(qry->zone_cut));
 					break;
 				}
-			} while (cut->parent);
-			qry->zone_cut.name = knot_dname_copy(new_cut_name_start, &req->pool);
-			if (!cut_found) {
-				qry->flags |= QUERY_AWAIT_CUT;
+			};
+
+			kr_zonecut_init(&next->zone_cut, new_cut_name_start, &req->pool);
+			if (cut_found) {
+				kr_zonecut_copy(&next->zone_cut, cut);
+				kr_zonecut_copy_trust(&next->zone_cut, cut);
+			} else {
+				next->flags |= QUERY_AWAIT_CUT;
 			}
-			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
+			next->flags |= QUERY_DNSSEC_WANT;
 			return KNOT_STATE_YIELD;
 		} else if (entry->rank != KR_VLDRANK_SECURE) {
 			qry->flags |= QUERY_DNSSEC_BOGUS;
@@ -594,14 +607,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Check if wildcard expansion detected for final query.
 	 * If yes, copy authority. */
 	if ((qry->parent == NULL) && (qry->flags & QUERY_DNSSEC_WEXPAND)) {
-		for (size_t i = 0; i < req->auth_selected.len; ++i) {
-			ranked_rr_array_entry_t *entry = req->auth_selected.at[i];
-			if (!entry->to_wire) {
-				continue;
-			}
-			knot_rrset_t *rr = entry->rr;
-			array_push(req->authority, rr);
-		}
+		kr_ranked_rrarray_set_wire(&req->auth_selected, true, qry->id);
 	}
 
 	/* Check and update current delegation point security status. */
