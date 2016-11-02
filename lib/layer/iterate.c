@@ -454,6 +454,7 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 	/* Follow canonical name as next SNAME. */
 	if (!knot_dname_is_equal(cname, query->sname)) {
 		/* Check if target record has been already copied */
+		query->flags |= QUERY_CNAME;
 		if (is_final) {
 			const knot_pktsection_t *an = knot_pkt_section(req->answer, KNOT_ANSWER);
 			for (unsigned i = 0; i < an->count; ++i) {
@@ -628,8 +629,8 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 		break; /* OK */
 	case KNOT_RCODE_REFUSED:
 	case KNOT_RCODE_SERVFAIL: {
-		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
 		if (query->flags & QUERY_STUB) { break; } /* Pass through in stub mode */
+		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
 		query->fails += 1;
 		if (query->fails >= KR_QUERY_NSRETRY_LIMIT) {
 			query->fails = 0; /* Reset per-query counter. */

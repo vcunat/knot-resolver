@@ -25,9 +25,12 @@
 #include <malloc.h>
 #endif
 #include <assert.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include "lib/utils.h"
 #include "lib/layer.h"
 #include "daemon/worker.h"
+#include "daemon/bindings.h"
 #include "daemon/engine.h"
 #include "daemon/io.h"
 #include "daemon/tls.h"
@@ -256,6 +259,8 @@ static struct qr_task *qr_task_create(struct worker_ctx *worker, uv_handle_t *ha
 	task->req.qsource.key = NULL;
 	task->req.qsource.addr = NULL;
 	task->req.qsource.dst_addr = NULL;
+	task->req.qsource.packet = NULL;
+	task->req.qsource.opt = NULL;
 	/* Remember query source addr */
 	if (addr) {
 		size_t addr_len = sizeof(struct sockaddr_in);
@@ -745,9 +750,21 @@ static int qr_task_step(struct qr_task *task, const struct sockaddr *packet_sour
 		if (subreq_enqueue(task)) {
 			return kr_ok(); /* Will be notified when outgoing query finishes. */
 		}
+		/* Check current query NSLIST */
+		struct kr_query *qry = array_tail(task->req.rplan.pending);
 		/* Start transmitting */
 		if (retransmit(task)) {
-			ret = timer_start(task, on_retransmit, KR_CONN_RETRY, 0);
+			assert(qry != NULL);
+			/* Retransmit at default interval, or more frequently if the mean
+			 * RTT of the server is better. If the server is glued, use default rate. */
+			size_t timeout = qry->ns.score;
+			if (timeout > KR_NS_GLUED) {
+				/* We don't have information about variance in RTT, expect +10ms */
+				timeout = MIN(qry->ns.score + 10, KR_CONN_RETRY);
+			} else {
+				timeout = KR_CONN_RETRY;
+			}
+			ret = timer_start(task, on_retransmit, timeout, 0);
 		} else {
 			return qr_task_step(task, NULL, NULL);
 		}
@@ -902,7 +919,12 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle, const uin
 	 * to buffer incoming message until it's complete. */
 	if (!session->outgoing) {
 		if (!task) {
-			task = qr_task_create(worker, (uv_handle_t *)handle, NULL);
+			/* Get TCP peer name, keep zeroed address if it fails. */
+			struct sockaddr_storage addr;
+			memset(&addr, 0, sizeof(addr));
+			int addr_len = sizeof(addr);
+			uv_tcp_getpeername((uv_tcp_t *)handle, (struct sockaddr *)&addr, &addr_len);
+			task = qr_task_create(worker, (uv_handle_t *)handle, (struct sockaddr *)&addr);
 			if (!task) {
 				return kr_error(ENOMEM);
 			}
@@ -1010,7 +1032,8 @@ int worker_resolve(struct worker_ctx *worker, knot_pkt_t *query, unsigned option
 	return qr_task_step(task, NULL, query);
 }
 
-int worker_reserve(struct worker_ctx *worker, size_t ring_maxlen)
+/** Reserve worker buffers */
+static int worker_reserve(struct worker_ctx *worker, size_t ring_maxlen)
 {
 	array_init(worker->pool_mp);
 	array_init(worker->pool_ioreq);
@@ -1043,6 +1066,40 @@ void worker_reclaim(struct worker_ctx *worker)
 	mp_delete(worker->pkt_pool.ctx);
 	worker->pkt_pool.ctx = NULL;
 	map_clear(&worker->outgoing);
+}
+
+struct worker_ctx *worker_create(struct engine *engine, knot_mm_t *pool,
+		int worker_id, int worker_count)
+{
+	/* Load bindings */
+	engine_lualib(engine, "modules", lib_modules);
+	engine_lualib(engine, "net",     lib_net);
+	engine_lualib(engine, "cache",   lib_cache);
+	engine_lualib(engine, "event",   lib_event);
+	engine_lualib(engine, "worker",  lib_worker);
+
+	/* Create main worker. */
+	struct worker_ctx *worker = mm_alloc(pool, sizeof(*worker));
+	if (!worker) {
+		return NULL;
+	}
+	memset(worker, 0, sizeof(*worker));
+	worker->id = worker_id;
+	worker->count = worker_count;
+	worker->engine = engine;
+	worker_reserve(worker, MP_FREELIST_SIZE);
+	/* Register worker in Lua thread */
+	lua_pushlightuserdata(engine->L, worker);
+	lua_setglobal(engine->L, "__worker");
+	lua_getglobal(engine->L, "worker");
+	lua_pushnumber(engine->L, worker_id);
+	lua_setfield(engine->L, -2, "id");
+	lua_pushnumber(engine->L, getpid());
+	lua_setfield(engine->L, -2, "pid");
+	lua_pushnumber(engine->L, worker_count);
+	lua_setfield(engine->L, -2, "count");
+	lua_pop(engine->L, 1);
+	return worker;
 }
 
 #undef DEBUG_MSG

@@ -55,11 +55,19 @@ static void tty_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf)
 	/* Set output streams */
 	FILE *out = stdout, *outerr = stderr;
 	uv_os_fd_t stream_fd = 0;
-	uv_fileno((uv_handle_t *)stream, &stream_fd);
+	if (uv_fileno((uv_handle_t *)stream, &stream_fd)) {
+		uv_close((uv_handle_t *)stream, (uv_close_cb) free);
+		if (buf) {
+			free(buf->base);
+		}
+		return;
+	}
 	if (stream_fd != STDIN_FILENO) {
 		if (nread <= 0) { /* Close if disconnected */
 			uv_close((uv_handle_t *)stream, (uv_close_cb) free);
-			free(buf->base);
+			if (buf) {
+				free(buf->base);
+			}
 			return;
 		}
 		uv_os_fd_t dup_fd = dup(stream_fd);
@@ -100,7 +108,9 @@ static void tty_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf)
 		lua_settop(L, 0);
 	}
 	fflush(out);
-	free(buf->base);
+	if (buf) {
+		free(buf->base);
+	}
 	/* Close if redirected */
 	if (stream_fd != STDIN_FILENO) {
 		fclose(out); /* outerr is the same */
@@ -166,7 +176,12 @@ static void ipc_activity(uv_poll_t* handle, int status, int events)
 	/* Read expression from IPC pipe */
 	uint32_t len = 0;
 	if (ipc_readall(fd, (char *)&len, sizeof(len))) {
-		auto_free char *rbuf = malloc(len + 1);
+		auto_free char *rbuf = NULL;
+		if (len < UINT32_MAX) {
+			rbuf = malloc(len + 1);
+		} else {
+			errno = EINVAL;
+		}
 		if (!rbuf) {
 			kr_log_error("[system] ipc: %s\n", strerror(errno));
 			engine_stop(engine); /* Panic and stop this fork. */
@@ -259,7 +274,6 @@ static int fork_workers(fd_array_t *ipc_set, int forks)
 			array_clear(*ipc_set);
 			array_push(*ipc_set, sv[0]);
 			close(sv[1]);
-			kr_crypto_reinit();
 			return forks;
 		/* Parent process */
 		} else {
@@ -289,39 +303,6 @@ static void help(int argc, char *argv[])
 	       " -h, --help           Print help and usage.\n"
 	       "Options:\n"
 	       " [rundir]             Path to the working directory (default: .)\n");
-}
-
-static struct worker_ctx *init_worker(struct engine *engine, knot_mm_t *pool, int worker_id, int worker_count)
-{
-	/* Load bindings */
-	engine_lualib(engine, "modules", lib_modules);
-	engine_lualib(engine, "net",     lib_net);
-	engine_lualib(engine, "cache",   lib_cache);
-	engine_lualib(engine, "event",   lib_event);
-	engine_lualib(engine, "worker",  lib_worker);
-
-	/* Create main worker. */
-	struct worker_ctx *worker = mm_alloc(pool, sizeof(*worker));
-	if(!worker) {
-		return NULL;
-	}
-	memset(worker, 0, sizeof(*worker));
-	worker->id = worker_id;
-	worker->count = worker_count;
-	worker->engine = engine;
-	worker_reserve(worker, MP_FREELIST_SIZE);
-	/* Register worker in Lua thread */
-	lua_pushlightuserdata(engine->L, worker);
-	lua_setglobal(engine->L, "__worker");
-	lua_getglobal(engine->L, "worker");
-	lua_pushnumber(engine->L, worker_id);
-	lua_setfield(engine->L, -2, "id");
-	lua_pushnumber(engine->L, getpid());
-	lua_setfield(engine->L, -2, "pid");
-	lua_pushnumber(engine->L, worker_count);
-	lua_setfield(engine->L, -2, "count");
-	lua_pop(engine->L, 1);
-	return worker;
 }
 
 static int run_worker(uv_loop_t *loop, struct engine *engine, fd_array_t *ipc_set, bool leader, int control_fd)
@@ -436,14 +417,18 @@ int main(int argc, char **argv)
 		case 'f':
 			g_interactive = false;
 			forks = atoi(optarg);
-			if (forks == 0) {
-				kr_log_error("[system] error '-f' requires number, not '%s'\n", optarg);
+			if (forks <= 0) {
+				kr_log_error("[system] error '-f' requires a positive"
+						" number, not '%s'\n", optarg);
 				return EXIT_FAILURE;
 			}
 			break;
 		case 'k':
 			keyfile_buf = malloc(PATH_MAX);
-			assert(keyfile_buf);
+			if (!keyfile_buf) {
+				kr_log_error("[system] not enough memory\n");
+				return EXIT_FAILURE;
+			}
 			/* Check if the path is absolute */
 			if (optarg[0] == '/') {
 				keyfile = strdup(optarg);
@@ -464,7 +449,8 @@ int main(int argc, char **argv)
 			}
 			free(keyfile_buf);
 			if (!keyfile) {
-				kr_log_error("[system] keyfile '%s': not writeable\n", optarg);
+				kr_log_error("[system] keyfile '%s':"
+					"failed to construct absolute path\n", optarg);
 				return EXIT_FAILURE;
 			}
 			break;
@@ -541,8 +527,6 @@ int main(int argc, char **argv)
 	 }
 #endif
 
-	kr_crypto_init();
-
 	/* Connect forks with local socket */
 	fd_array_t ipc_set;
 	array_init(ipc_set);
@@ -551,6 +535,8 @@ int main(int argc, char **argv)
 	if (fork_id < 0) {
 		return EXIT_FAILURE;
 	}
+
+	kr_crypto_init();
 
 	/* Create a server engine. */
 	knot_mm_t pool = {
@@ -564,7 +550,7 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	/* Create worker */
-	struct worker_ctx *worker = init_worker(&engine, &pool, fork_id, forks);
+	struct worker_ctx *worker = worker_create(&engine, &pool, fork_id, forks);
 	if (!worker) {
 		kr_log_error("[system] not enough memory\n");
 		return EXIT_FAILURE;
@@ -639,10 +625,10 @@ int main(int argc, char **argv)
 			/* Run the event loop */
 			ret = run_worker(loop, &engine, &ipc_set, fork_id == 0, control_fd);
 		}
-	}
-	if (ret != 0) {
-		perror("[system] worker failed");
-		ret = EXIT_FAILURE;
+		if (ret != 0) {
+			perror("[system] worker failed");
+			ret = EXIT_FAILURE;
+		}
 	}
 	/* Cleanup. */
 	engine_deinit(&engine);

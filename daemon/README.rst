@@ -1,4 +1,3 @@
-
 ************************
 Knot DNS Resolver daemon 
 ************************
@@ -86,7 +85,7 @@ Scaling out
 
 The server can clone itself into multiple processes upon startup, this enables you to scale it on multiple cores.
 Multiple processes can serve different addresses, but still share the same working directory and cache.
-You can add start and stop processes on runtime based on the load.
+You can add, start and stop processes during runtime based on the load.
 
 .. code-block:: bash
 
@@ -102,7 +101,7 @@ You can add start and stop processes on runtime based on the load.
    bash(3533)─┬─kresd(19212)─┬─kresd(19212)
               │              ├─kresd(19212)
               │              └─kresd(19212)
-              └─pstree(19460)  
+              └─pstree(19460)
 
 .. _daemon-reuseport:
 
@@ -243,6 +242,16 @@ Another example would show how it is possible to bind to all interfaces, using i
 	for name, addr_list in pairs(net.interfaces()) do
 		net.listen(addr_list)
 	end
+
+.. tip:: Some users observed a considerable, close to 100%, performance gain in Docker containers when they bound the daemon to a single interface:ip address pair. One may expand the aforementioned example with browsing available addresses as:
+
+	.. code-block:: lua
+
+		addrpref = env.EXPECTED_ADDR_PREFIX
+		for k, v in pairs(addr_list["addr"]) do
+			if string.sub(v,1,string.len(addrpref)) == addrpref then
+				net.listen(v)
+		...
 
 You can also use third-party packages (available for example through LuaRocks_) as on this example
 to download cache from parent, to avoid cold-cache start.
@@ -385,6 +394,14 @@ Environment
     "Use in-bailiwick glue", "normal, permissive"
     "Use any glue records", "permissive"
 
+.. function:: reorder_RR([true | false])
+
+   :param boolean value: New value for the option *(optional)*
+   :return: The (new) value of the option
+
+   If set, resolver will vary the order of resource records within RR-sets
+   every time when answered from cache.  It is disabled by default.
+
 .. function:: user(name, [group])
 
    :param string name: user name
@@ -439,6 +456,7 @@ Environment
             -- Print matching records
             local records = pkt:section(kres.section.ANSWER)
             for i = 1, #records do
+               local rr = records[i]
                if rr.type == kres.type.AAAA then
                   print ('record:', kres.rr2str(rr))
                end
@@ -472,29 +490,23 @@ For when listening on ``localhost`` just doesn't cut it.
 
    Enable/disable using IPv4 for recursion.
 
-.. function:: net.listen(address, [port = 53, flags = {tls = false}])
+.. function:: net.listen(addresses, [port = 53, flags = {tls = (port == 853)}])
 
    :return: boolean
 
-   Listen on address, port and flags are optional.
+   Listen on addresses; port and flags are optional.
+   The addresses can be specified as a string or device,
+   or a list of addresses (recursively).
+   The command can be given multiple times, but note that it silently skips
+   any addresses that have already been bound.
 
-.. function:: net.listen({address1, ...}, [port = 53, flags = {tls = false}])
-
-   :return: boolean
-
-   Listen on list of addresses.
-
-.. function:: net.listen(interface, [port = 53, flags = {tls = false}])
-
-   :return: boolean
-
-   Listen on all addresses belonging to an interface.
-
-   Example:
+   Examples:
 
    .. code-block:: lua
 
-	net.listen(net.eth0) -- listen on eth0
+	net.listen('::1')
+	net.listen(net.lo, 5353)
+	net.listen({net.eth0, '127.0.0.1'}, 53853, {tls = true})
 
 .. function:: net.close(address, [port = 53])
 
@@ -571,8 +583,8 @@ For when listening on ``localhost`` just doesn't cut it.
 
    .. code-block:: lua
 
-      > net.tls_cert("/etc/kresd/server-cert.pem", "/etc/kresd/server-key.pem")
-      > net.tls_cert()
+      > net.tls("/etc/kresd/server-cert.pem", "/etc/kresd/server-key.pem")
+      > net.tls()
       ("/etc/kresd/server-cert.pem", "/etc/kresd/server-key.pem")
       > net.listen("::", 853)
       > net.listen("::", 443, {tls = true})

@@ -11,17 +11,7 @@ local bit = require('bit')
 local bor = bit.bor
 local band = bit.band
 local C = ffi.C
-
--- Load any of supported libknot SO versions
-local knot
-for ver = 2, 3 do
-	local ok, lib = pcall(ffi.load, libpath('libknot', tostring(ver)))
-	if ok then
-		knot = lib
-		break
-	end
-end
-assert(knot, 'support libknot not found')
+local knot = ffi.load(libknot_SONAME)
 
 ffi.cdef[[
 
@@ -290,7 +280,7 @@ struct kr_query *kr_rplan_push(struct kr_rplan *rplan, struct kr_query *parent,
 struct kr_query *kr_rplan_resolved(struct kr_rplan *rplan);
 struct kr_query *kr_rplan_next(struct kr_query *qry);
 /* Nameservers */
-int kr_nsrep_set(struct kr_query *qry, uint8_t *addr, size_t addr_len, int port);
+int kr_nsrep_set(struct kr_query *qry, size_t index, uint8_t *addr, size_t addr_len, int port);
 /* Query */
 /* Utils */
 unsigned kr_rand_uint(unsigned max);
@@ -430,9 +420,15 @@ ffi.metatype( kr_query_t, {
 		final = function(qry)
 			return qry:resolved() and (qry.parent == nil)
 		end,
-		nslist = function(qry, ns, port)
-			if ns ~= nil then C.kr_nsrep_set(qry, ffi.cast(ub_t, ns), #ns, port) end
-			-- @todo: Return list of NS entries, not possible ATM because the NSLIST is union and missing typedef
+		nslist = function(qry, list)
+			assert(#list <= 4, 'maximum of 4 addresses can be evaluated for each query')
+			for i, ns in ipairs(list) do
+				C.kr_nsrep_set(qry, i - 1, ffi.cast(ub_t, ns[1]), #ns[1], ns[2] or 53)
+			end
+			-- If less than maximum NSs, insert guard to terminate the list
+			if #list < 4 then
+				C.kr_nsrep_set(qry, #list, nil, 0, 0)
+			end
 		end,
 	},
 })

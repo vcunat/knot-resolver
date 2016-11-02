@@ -23,7 +23,9 @@ endif
 bindings-install: $(kresd_DIST) $(DESTDIR)$(MODULEDIR)
 	$(INSTALL) -m 0644 $(kresd_DIST) $(DESTDIR)$(MODULEDIR)
 
-kresd_CFLAGS := -fPIE
+kresd_CFLAGS := -fPIE \
+		-Dlibknot_SONAME=\"$(libknot_SONAME)\" \
+		-Dlibzscanner_SONAME=\"$(libzscanner_SONAME)\"
 kresd_DEPEND := $(libkres) $(contrib)
 kresd_LIBS := $(libkres_TARGET) $(contrib_TARGET) $(libknot_LIBS) \
               $(libzscanner_LIBS) $(libdnssec_LIBS) $(libuv_LIBS) $(lua_LIBS) \
@@ -45,9 +47,9 @@ date := $(shell date +%F)
 daemon: $(kresd)
 daemon-install: kresd-install bindings-install
 ifneq ($(SED),)
-	$(SED) -e "s/@VERSION@/$(MAJOR).$(MINOR).$(PATCH)/" -e "s/@DATE@/$(date)/" doc/kresd.8.in > doc/kresd.8
-	$(INSTALL) -d -m 0755 $(DESTDIR)$(PREFIX)/share/man/man8/
-	$(INSTALL) -m 0644 doc/kresd.8 $(DESTDIR)$(PREFIX)/share/man/man8/
+	$(SED) -e "s/@VERSION@/$(VERSION)/" -e "s/@DATE@/$(date)/" doc/kresd.8.in > doc/kresd.8
+	$(INSTALL) -d -m 0755 $(DESTDIR)$(MANDIR)/man8/
+	$(INSTALL) -m 0644 doc/kresd.8 $(DESTDIR)$(MANDIR)/man8/
 endif
 daemon-clean: kresd-clean
 	@$(RM) daemon/lua/*.inc
