@@ -215,7 +215,7 @@ static_assert(64 == sizeof(struct lru_group)
 		"bad sizing for your sizeof(void*)");
 
 struct lru {
-	struct knot_mm *mm, /**< Memory context to use keys. */
+	struct knot_mm *mm, /**< Memory context to use for keys. */
 		*mm_array; /**< Memory context to use for this structure itself. */
 	uint log_groups; /**< Logarithm of the number of LRU groups. */
 	struct lru_group groups[] CACHE_ALIGNED; /**< The groups of items. */
@@ -227,7 +227,7 @@ static inline void lru_free_impl(struct lru *lru)
 	if (!lru)
 		return;
 	lru_free_items_impl(lru);
-	mm_free(lru->mm, lru);
+	mm_free(lru->mm_array, lru);
 }
 
 /** @internal See lru_reset. */

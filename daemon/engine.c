@@ -561,7 +561,11 @@ void engine_deinit(struct engine *engine)
 	network_deinit(&engine->net);
 	kr_zonecut_deinit(&engine->resolver.root_hints);
 	kr_cache_close(&engine->resolver.cache);
-	/* Fully in mempool: engine->resolver.cache_{rtt,rep,cookie} */
+
+	/* The lru keys are currently malloc-ated and need to be freed. */
+	lru_free(engine->resolver.cache_rtt);
+	lru_free(engine->resolver.cache_rep);
+	lru_free(engine->resolver.cache_cookie);
 
 	/* Clear IPC pipes */
 	for (size_t i = 0; i < engine->ipc_set.len; ++i) {
