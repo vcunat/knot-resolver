@@ -66,6 +66,7 @@ static int l_help(lua_State *L)
 		"verbose(true|false)\n    toggle verbose mode\n"
 		"option(opt[, new_val])\n    get/set server option\n"
 		"mode(strict|normal|permissive)\n    set resolver strictness level\n"
+		"reorder_RR([true|false])\n    set/get reordering of RRs within RRsets\n"
 		"resolve(name, type[, class, flags, callback])\n    resolve query, callback when it's finished\n"
 		"todname(name)\n    convert name to wire format\n"
 		"tojson(val)\n    convert value to JSON\n"
@@ -126,26 +127,6 @@ static int l_setuser(lua_State *L)
 		lua_error(L);
 	}
 	lua_pushboolean(L, ret);
-	return 1;
-}
-
-/** Return platform-specific versioned library name. */
-static int l_libpath(lua_State *L)
-{
-	int n = lua_gettop(L);
-	if (n < 2)
-		return 0;
-	auto_free char *lib_path = NULL;
-	const char *lib_name = lua_tostring(L, 1);
-	const char *lib_version = lua_tostring(L, 2);
-#if defined(__APPLE__)
-	lib_path = afmt("%s.%s.dylib", lib_name, lib_version);
-#elif _WIN32
-	lib_path = afmt("%s.dll", lib_name); /* Versioned in RC files */
-#else
-	lib_path = afmt("%s.so.%s", lib_name, lib_version);
-#endif
-	lua_pushstring(L, lib_path);
 	return 1;
 }
 
@@ -369,6 +350,7 @@ static int l_map(lua_State *L)
 		/* Read response */
 		uint32_t rlen = 0;
 		if (read(fd, &rlen, sizeof(rlen)) == sizeof(rlen)) {
+			expr_checked(rlen < UINT32_MAX);
 			auto_free char *rbuf = malloc(rlen + 1);
 			expr_checked(rbuf != NULL);
 			expr_checked(read(fd, rbuf, rlen) == rlen);
@@ -461,18 +443,9 @@ static int init_resolver(struct engine *engine)
 	kr_zonecut_init(&engine->resolver.root_hints, (const uint8_t *)"", engine->pool);
 	kr_zonecut_set_sbelt(&engine->resolver, &engine->resolver.root_hints);
 	/* Open NS rtt + reputation cache */
-	engine->resolver.cache_rtt = mm_alloc(engine->pool, lru_size(kr_nsrep_lru_t, LRU_RTT_SIZE));
-	if (engine->resolver.cache_rtt) {
-		lru_init(engine->resolver.cache_rtt, LRU_RTT_SIZE);
-	}
-	engine->resolver.cache_rep = mm_alloc(engine->pool, lru_size(kr_nsrep_lru_t, LRU_REP_SIZE));
-	if (engine->resolver.cache_rep) {
-		lru_init(engine->resolver.cache_rep, LRU_REP_SIZE);
-	}
-	engine->resolver.cache_cookie = mm_alloc(engine->pool, lru_size(kr_cookie_lru_t, LRU_COOKIES_SIZE));
-	if (engine->resolver.cache_cookie) {
-		lru_init(engine->resolver.cache_cookie, LRU_COOKIES_SIZE);
-	}
+	lru_create(&engine->resolver.cache_rtt, LRU_RTT_SIZE, engine->pool, NULL);
+	lru_create(&engine->resolver.cache_rep, LRU_REP_SIZE, engine->pool, NULL);
+	lru_create(&engine->resolver.cache_cookie, LRU_COOKIES_SIZE, engine->pool, NULL);
 
 	/* Load basic modules */
 	engine_register(engine, "iterate", NULL, NULL);
@@ -508,8 +481,10 @@ static int init_state(struct engine *engine)
 	lua_setglobal(engine->L, "user");
 	lua_pushcfunction(engine->L, l_trustanchor);
 	lua_setglobal(engine->L, "trustanchor");
-	lua_pushcfunction(engine->L, l_libpath);
-	lua_setglobal(engine->L, "libpath");
+	lua_pushliteral(engine->L, libknot_SONAME);
+	lua_setglobal(engine->L, "libknot_SONAME");
+	lua_pushliteral(engine->L, libzscanner_SONAME);
+	lua_setglobal(engine->L, "libzscanner_SONAME");
 	lua_pushcfunction(engine->L, l_tojson);
 	lua_setglobal(engine->L, "tojson");
 	lua_pushcfunction(engine->L, l_map);
@@ -523,20 +498,17 @@ static int init_state(struct engine *engine)
 	return kr_ok();
 }
 
+static enum lru_apply_do update_stat_item(const char *key, uint len,
+						unsigned *rtt, void *baton)
+{
+	return *rtt > KR_NS_LONG ? LRU_APPLY_DO_EVICT : LRU_APPLY_DO_NOTHING;
+}
+/** @internal Walk RTT table, clearing all entries with bad score
+ *    to compensate for intermittent network issues or temporary bad behaviour. */
 static void update_state(uv_timer_t *handle)
 {
 	struct engine *engine = handle->data;
-
-	/* Walk RTT table, clearing all entries with bad score
-	 * to compensate for intermittent network issues or temporary bad behaviour. */
-	kr_nsrep_lru_t *table = engine->resolver.cache_rtt;
-	for (size_t i = 0; i < table->size; ++i) {
-		if (!table->slots[i].key)
-			continue;
-		if (table->slots[i].data > KR_NS_LONG) {
-			lru_evict(table, i);
-		}
-	}
+	lru_apply(engine->resolver.cache_rtt, update_stat_item, NULL);
 }
 
 int engine_init(struct engine *engine, knot_mm_t *pool)
@@ -589,9 +561,11 @@ void engine_deinit(struct engine *engine)
 	network_deinit(&engine->net);
 	kr_zonecut_deinit(&engine->resolver.root_hints);
 	kr_cache_close(&engine->resolver.cache);
-	lru_deinit(engine->resolver.cache_rtt);
-	lru_deinit(engine->resolver.cache_rep);
-	lru_deinit(engine->resolver.cache_cookie);
+
+	/* The lru keys are currently malloc-ated and need to be freed. */
+	lru_free(engine->resolver.cache_rtt);
+	lru_free(engine->resolver.cache_rep);
+	lru_free(engine->resolver.cache_cookie);
 
 	/* Clear IPC pipes */
 	for (size_t i = 0; i < engine->ipc_set.len; ++i) {

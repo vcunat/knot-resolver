@@ -2,9 +2,11 @@
 MAJOR := 1
 MINOR := 1
 PATCH := 1
-ABIVER := 1
+ABIVER := 2
 BUILDMODE := dynamic
 HARDENING := yes
+
+VERSION := $(MAJOR).$(MINOR).$(PATCH)
 
 # Paths
 PREFIX ?= /usr/local
@@ -21,13 +23,13 @@ ETCDIR ?= $(PREFIX)/etc/kresd
 CC	?= cc
 RM	:= rm -f
 LN      := ln -s
-XXD     := ./scripts/embed.sh
+XXD_LUA := ./scripts/embed-lua.sh
 INSTALL := install
 
 # Flags
 BUILD_LDFLAGS += $(LDFLAGS)
 BUILD_CFLAGS := $(CFLAGS) -std=c99 -D_GNU_SOURCE -Wno-unused -Wtype-limits -Wformat -Wformat-security -Wall -I$(abspath .) -I$(abspath lib/generic) -I$(abspath contrib) -I$(abspath contrib/lmdb)
-BUILD_CFLAGS += -DPACKAGE_VERSION="\"$(MAJOR).$(MINOR).$(PATCH)\"" -DPREFIX="\"$(PREFIX)\"" -DMODULEDIR="\"$(MODULEDIR)\"" -DETCDIR="\"$(ETCDIR)\""
+BUILD_CFLAGS += -DPACKAGE_VERSION="\"$(VERSION)\"" -DPREFIX="\"$(PREFIX)\"" -DMODULEDIR="\"$(MODULEDIR)\"" -DETCDIR="\"$(ETCDIR)\""
 ifeq (,$(findstring -O,$(CFLAGS)))
 	BUILD_CFLAGS += -O2
 endif
