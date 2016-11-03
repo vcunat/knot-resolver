@@ -578,7 +578,7 @@ int kr_cache_materialize(knot_rrset_t *rr, const struct kr_cache_entry *entry,
 		uint32_t ttl = knot_rdata_ttl(rd);
 		if (ttl) {
 			/* count on possibility of having per-RR TTL */
-			ttl -= - entry->timestamp/*drift*/;
+			ttl -= entry->timestamp/*drift*/;
 		} else {
 			ttl = ttl_new;
 		}
