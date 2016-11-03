@@ -77,7 +77,7 @@ static int loot_rr(struct kr_cache *cache, knot_pkt_t *pkt, const knot_dname_t *
 	}
 
 	/* Update packet answer */
-	ret = kr_cache_materialize(&cache_rr, entry, &pkt->mm);
+	ret = kr_cache_materialize(&cache_rr, entry, qry->reorder, &pkt->mm);
 	if (ret == 0) {
 		ret = knot_pkt_put(pkt, KNOT_COMPR_HINT_QNAME, &cache_rr, KNOT_PF_FREE);
 		if (ret != 0) {
@@ -373,7 +373,8 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 			ret = stash_authority(qry, pkt, &stash, &req->pool);
 		}
 	/* Cache authority only if chasing referral/cname chain */
-	} else if (!is_auth || qry != array_tail(req->rplan.pending)) {
+	} else if (knot_pkt_section(pkt, KNOT_ANSWER)->count == 0 ||
+		   qry->flags & QUERY_CNAME) {
 		ret = stash_authority(qry, pkt, &stash, &req->pool);
 	}
 	/* Cache DS records in referrals */

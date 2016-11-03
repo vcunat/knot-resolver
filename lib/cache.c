@@ -534,7 +534,7 @@ int kr_cache_peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *
 }
 
 int kr_cache_materialize(knot_rrset_t *rr, const struct kr_cache_entry *entry,
-			 knot_mm_t *mm)
+			 uint reorder, knot_mm_t *mm)
 {
 	if (!rr || !entry || entry->timestamp/*drift*/ > entry->ttl) {
 		return kr_error(EINVAL);
@@ -552,8 +552,17 @@ int kr_cache_materialize(knot_rrset_t *rr, const struct kr_cache_entry *entry,
 		rd = kr_rdataset_next(rd);
 	}
 
-	/* Reordering left up for now. */
-
+	if (reorder && valid_count > 1) {
+		/* Reorder the valid part; it's a reversed rotation,
+		 * done by two array reversals. */
+		uint16_t shift = reorder % valid_count;
+		for (uint16_t i = 0; i < shift / 2; ++i) {
+			SWAP(valid[i], valid[shift - 1 - i]);
+		}
+		for (uint16_t i = 0; i < (valid_count - shift) / 2; ++i) {
+			SWAP(valid[shift + i], valid[valid_count - 1 - i]);
+		}
+	}
 
 	rr->rrs.data = NULL;
 	int err = knot_rdataset_gather(&rr->rrs, valid, valid_count, mm);

@@ -1,4 +1,5 @@
 libkres_SOURCES := \
+	lib/generic/lru.c      \
 	lib/generic/map.c      \
 	lib/layer/iterate.c    \
 	lib/layer/validate.c   \
@@ -20,6 +21,7 @@ libkres_SOURCES := \
 
 libkres_HEADERS := \
 	lib/generic/array.h    \
+	lib/generic/lru.h      \
 	lib/generic/map.h      \
 	lib/generic/set.h      \
 	lib/layer.h            \
@@ -63,6 +65,10 @@ libkres_HEADERS += \
 libkres_LIBS += $(nettle_LIBS)
 endif
 
+lib/zonecut.c: lib/root-hints.inc
+lib/root-hints.inc: scripts/gen-root-hints.sh scripts/inet_pton.py
+	scripts/gen-root-hints.sh > $@
+
 # Make library
 ifeq ($(BUILDMODE), static)
 $(eval $(call make_static,libkres,lib,yes))
@@ -79,7 +85,7 @@ libkres.pc:
 	@echo 'Name: libkres' >> $@
 	@echo 'Description: Knot DNS Resolver library' >> $@
 	@echo 'URL: https://www.knot-resolver.cz' >> $@
-	@echo 'Version: $(MAJOR).$(MINOR).$(PATCH)' >> $@
+	@echo 'Version: $(VERSION)' >> $@
 	@echo 'Libs: -L$${libdir} -lkres' >> $@
 	@echo 'Cflags: -I$${includedir}' >> $@
 libkres-pcinstall: libkres.pc libkres-install

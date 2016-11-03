@@ -19,6 +19,7 @@
 #include <libknot/rrset.h>
 #include "lib/cdb.h"
 #include "lib/defines.h"
+#include "contrib/ucw/config.h" /*uint*/
 
 typedef struct kr_ecs kr_ecs_t; // TODO
 
@@ -211,12 +212,13 @@ int kr_cache_peek_rr(struct kr_cache *cache, const kr_ecs_t *ecs, knot_rrset_t *
  * Clone RRSet's read-only data and adjust TTLs.
  * @param rr the RRSet; only rr->rrs.data will be replaced (not e.g. rr->owner)
  * @param entry cache entry returned from successful kr_cache_peek_rr
+ * @param reorder (pseudo)-random seed to reorder the data or zero
  * @param mm memory context
  * @return 0 or an errcode
  */
 KR_EXPORT
 int kr_cache_materialize(knot_rrset_t *rr, const struct kr_cache_entry *entry,
-			 knot_mm_t *mm);
+			 uint reorder, knot_mm_t *mm);
 
 /**
  * Insert RRSet into cache, replacing any existing data.
