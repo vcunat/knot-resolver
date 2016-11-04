@@ -382,8 +382,64 @@ static const knot_dname_t *signature_authority(struct kr_request *req)
 	return signer_name;
 }
 
-static int check_validation_result(struct kr_request *req, ranked_rr_array_t *arr)
+static int rrsig_not_found(knot_layer_t *ctx, const knot_rrset_t *rr)
 {
+	struct kr_request *req = ctx->data;
+	struct kr_query *qry = req->current_query;
+
+	if (knot_dname_is_equal(rr->owner, qry->zone_cut.name) ||
+				ctx->state == KNOT_STATE_YIELD) {
+		/* Already yielded for revalidation. */
+		DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
+		qry->flags |= QUERY_DNSSEC_BOGUS;
+		return KNOT_STATE_FAIL;
+	}
+
+	DEBUG_MSG(qry, ">< no RRSIGs found\n");
+	int owner_labels = knot_dname_labels(rr->owner, NULL);
+	int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
+	int skip_labels = owner_labels - matched_labels - 1;
+	const knot_dname_t *new_cut_name_start = rr->owner;
+	while (skip_labels--) {
+		new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
+	}
+	struct kr_zonecut *cut = &qry->zone_cut;
+	if (knot_dname_is_sub(new_cut_name_start, qry->zone_cut.name)) {
+		struct kr_zonecut *parent = mm_alloc(&req->pool, sizeof(*parent));
+		if (parent) {
+			memcpy(parent, cut, sizeof(*parent));
+			kr_zonecut_init(cut, new_cut_name_start, &req->pool);
+			cut->key = parent->key;
+			cut->trust_anchor = parent->trust_anchor;
+			cut->parent = parent;
+		} else {
+			kr_zonecut_set(cut, new_cut_name_start);
+		}
+		qry->flags |= QUERY_AWAIT_CUT;
+	} else {
+		/* try to find the name wanted among ancestors */
+		bool cut_found = false;
+		while (cut->parent) {
+			cut = cut->parent;
+			if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
+				cut_found = true;
+				break;
+			}
+		};
+		kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
+		if (cut_found) {
+			kr_zonecut_copy(&qry->zone_cut, cut);
+			kr_zonecut_copy_trust(&qry->zone_cut, cut);
+		} else {
+			qry->flags |= QUERY_AWAIT_CUT;
+		}
+	}
+	return KNOT_STATE_YIELD;
+}
+
+static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
+{
+	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
 	/* first search for a RRSIGs which signer name is out of current zone. */
 	for (size_t i = 0; i < arr->len; ++i) {
@@ -407,45 +463,7 @@ static int check_validation_result(struct kr_request *req, ranked_rr_array_t *ar
 		}
 		const knot_rrset_t *rr = entry->rr;
 		if (entry->rank == KR_VLDRANK_INSECURE) {
-			int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
-			int owner_labels = knot_dname_labels(rr->owner, NULL);
-			int skip_labels = owner_labels - matched_labels;
-			if (!skip_labels) {
-				DEBUG_MSG(qry, ">< no RRSIGs found\n");
-				return KNOT_STATE_FAIL;
-			} else {
-				DEBUG_MSG(qry, ">< no RRSIGs found, cut changed\n");
-			}
-
-			struct kr_query *next = kr_rplan_push(&req->rplan, qry, rr->owner,
-							      rr->rclass, KNOT_RRTYPE_RRSIG);
-			if (!next) {
-				return KNOT_STATE_FAIL;
-			}
-
-			const knot_dname_t *new_cut_name_start = rr->owner;
-			while (skip_labels--) {
-				new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
-			}
-			struct kr_zonecut *cut = &qry->zone_cut;
-			bool cut_found = false;
-			while (cut->parent) {
-				cut = cut->parent;
-				if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
-					cut_found = true;
-					break;
-				}
-			};
-
-			kr_zonecut_init(&next->zone_cut, new_cut_name_start, &req->pool);
-			if (cut_found) {
-				kr_zonecut_copy(&next->zone_cut, cut);
-				kr_zonecut_copy_trust(&next->zone_cut, cut);
-			} else {
-				next->flags |= QUERY_AWAIT_CUT;
-			}
-			next->flags |= QUERY_DNSSEC_WANT;
-			return KNOT_STATE_YIELD;
+			return rrsig_not_found(ctx, rr);
 		} else if (entry->rank != KR_VLDRANK_SECURE) {
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 			return KNOT_STATE_FAIL;
@@ -594,11 +612,11 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 			return KNOT_STATE_FAIL;
 		}
 		/* check validation state and spawn subrequests */
-		ret = check_validation_result(req, &req->answ_selected);
+		ret = check_validation_result(ctx, &req->answ_selected);
 		if (ret != KNOT_STATE_DONE) {
 			return ret;
 		}
-		ret = check_validation_result(req, &req->auth_selected);
+		ret = check_validation_result(ctx, &req->auth_selected);
 		if (ret != KNOT_STATE_DONE) {
 			return ret;
 		}
