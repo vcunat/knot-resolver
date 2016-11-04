@@ -359,7 +359,7 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Cache authority only if chasing referral/cname chain */
 	} else if (knot_pkt_section(pkt, KNOT_ANSWER)->count == 0 ||
 		   qry->flags & QUERY_CNAME) {
-		ret = stash_authority(qry, pkt, &stash, &req->pool);
+		ret = stash_authority(req, pkt, &stash, &req->pool);
 	}
 	/* Cache DS records in referrals */
 	if (!is_auth && knot_pkt_has_dnssec(pkt)) {
