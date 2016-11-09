@@ -12,7 +12,7 @@ kresd_DIST := daemon/lua/kres.lua daemon/lua/trust_anchors.lua
 
 # Embedded resources
 %.inc: %.lua
-	@$(call quiet,XXD,$<) $< > $@
+	@$(call quiet,XXD_LUA,$<) $< > $@
 ifeq ($(AMALG), yes)
 kresd.amalg.c: daemon/lua/sandbox.inc daemon/lua/config.inc
 else
@@ -23,7 +23,9 @@ endif
 bindings-install: $(kresd_DIST) $(DESTDIR)$(MODULEDIR)
 	$(INSTALL) -m 0644 $(kresd_DIST) $(DESTDIR)$(MODULEDIR)
 
-kresd_CFLAGS := -fPIE
+kresd_CFLAGS := -fPIE \
+		-Dlibknot_SONAME=\"$(libknot_SONAME)\" \
+		-Dlibzscanner_SONAME=\"$(libzscanner_SONAME)\"
 kresd_DEPEND := $(libkres) $(contrib)
 kresd_LIBS := $(libkres_TARGET) $(contrib_TARGET) $(libknot_LIBS) \
               $(libzscanner_LIBS) $(libdnssec_LIBS) $(libuv_LIBS) $(lua_LIBS) \
@@ -45,7 +47,7 @@ date := $(shell date +%F)
 daemon: $(kresd)
 daemon-install: kresd-install bindings-install
 ifneq ($(SED),)
-	$(SED) -e "s/@VERSION@/$(MAJOR).$(MINOR).$(PATCH)/" -e "s/@DATE@/$(date)/" doc/kresd.8.in > doc/kresd.8
+	$(SED) -e "s/@VERSION@/$(VERSION)/" -e "s/@DATE@/$(date)/" doc/kresd.8.in > doc/kresd.8
 	$(INSTALL) -d -m 0755 $(DESTDIR)$(MANDIR)/man8/
 	$(INSTALL) -m 0644 doc/kresd.8 $(DESTDIR)$(MANDIR)/man8/
 endif

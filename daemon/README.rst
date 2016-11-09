@@ -1,4 +1,3 @@
-
 ************************
 Knot DNS Resolver daemon 
 ************************
@@ -244,6 +243,16 @@ Another example would show how it is possible to bind to all interfaces, using i
 		net.listen(addr_list)
 	end
 
+.. tip:: Some users observed a considerable, close to 100%, performance gain in Docker containers when they bound the daemon to a single interface:ip address pair. One may expand the aforementioned example with browsing available addresses as:
+
+	.. code-block:: lua
+
+		addrpref = env.EXPECTED_ADDR_PREFIX
+		for k, v in pairs(addr_list["addr"]) do
+			if string.sub(v,1,string.len(addrpref)) == addrpref then
+				net.listen(v)
+		...
+
 You can also use third-party packages (available for example through LuaRocks_) as on this example
 to download cache from parent, to avoid cold-cache start.
 
@@ -385,6 +394,14 @@ Environment
     "Use in-bailiwick glue", "normal, permissive"
     "Use any glue records", "permissive"
 
+.. function:: reorder_RR([true | false])
+
+   :param boolean value: New value for the option *(optional)*
+   :return: The (new) value of the option
+
+   If set, resolver will vary the order of resource records within RR-sets
+   every time when answered from cache.  It is disabled by default.
+
 .. function:: user(name, [group])
 
    :param string name: user name
@@ -439,6 +456,7 @@ Environment
             -- Print matching records
             local records = pkt:section(kres.section.ANSWER)
             for i = 1, #records do
+               local rr = records[i]
                if rr.type == kres.type.AAAA then
                   print ('record:', kres.rr2str(rr))
                end
@@ -565,8 +583,8 @@ For when listening on ``localhost`` just doesn't cut it.
 
    .. code-block:: lua
 
-      > net.tls_cert("/etc/kresd/server-cert.pem", "/etc/kresd/server-key.pem")
-      > net.tls_cert()
+      > net.tls("/etc/kresd/server-cert.pem", "/etc/kresd/server-key.pem")
+      > net.tls()
       ("/etc/kresd/server-cert.pem", "/etc/kresd/server-key.pem")
       > net.listen("::", 853)
       > net.listen("::", 443, {tls = true})
