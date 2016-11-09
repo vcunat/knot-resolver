@@ -41,12 +41,13 @@ enum kr_ns_score {
 };
 
 /**
- * NS QoS flags.
+ * NS QoS flags.  All cleared by default.
  */
 enum kr_ns_rep {
 	KR_NS_NOIP4  = 1 << 0, /**< NS has no IPv4 */
 	KR_NS_NOIP6  = 1 << 1, /**< NS has no IPv6 */
-	KR_NS_NOEDNS = 1 << 2  /**< NS has no EDNS support */
+	//KR_NS_NOEDNS = 1 << 2, /**< NS has no EDNS support; unused so far */
+	KR_NS_FLAG_COUNT = 2,  /**< The number/range of flags above */
 };
 
 /**
@@ -59,9 +60,9 @@ enum kr_ns_update_mode {
 	KR_NS_MAX         /**< Set to maximum of current/proposed value. */
 };
 
-/**
- * NS reputation/QoS tracking.
- */
+/** NS reputation tracking. */
+typedef lru_t(struct kr_nsrep_rep) kr_nsrep_rep_lru_t;
+/** NS RTT tracking. */
 typedef lru_t(unsigned) kr_nsrep_lru_t;
 
 /* Maximum count of addresses probed in one go (last is left empty) */
@@ -139,12 +140,26 @@ int kr_nsrep_update_rtt(struct kr_nsrep *ns, const struct sockaddr *addr,
 			unsigned score, kr_nsrep_lru_t *cache, int umode);
 
 /**
- * Update NSSET reputation information.
- * 
- * @param  ns           updated NS representation
- * @param  reputation   combined reputation flags, see enum kr_ns_rep
- * @param  cache        LRU cache
- * @return              0 on success, error code on failure
+ * Set reputation flags for the current NS.
+ *
+ * @param  qry          query where to update .ns.reputation, use its timestamp and cache
+ * @param  reputation   combined reputation flags to set, see enum kr_ns_rep
+ *                      (flags not present are not touched)
+ * @return              0 on success, error code when called badly
  */
 KR_EXPORT
-int kr_nsrep_update_rep(struct kr_nsrep *ns, unsigned reputation, kr_nsrep_lru_t *cache);
+int kr_nsrep_flags_set(struct kr_query *qry, unsigned flags);
+
+
+/**
+ * Get cached NS reputation.
+ *
+ * @param  ctx          context for cache
+ * @param  name         the name to probe
+ * @param  timestamp    current time (in seconds); flags older than a day are cleared
+ * @return              the reputation, defaulting to 0 when not found
+ */
+KR_EXPORT
+unsigned kr_nsrep_flags_get(const struct kr_context *ctx, const knot_dname_t *name,
+			    uint32_t timestamp);
+

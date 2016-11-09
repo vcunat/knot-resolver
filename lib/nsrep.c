@@ -115,21 +115,15 @@ static unsigned eval_addr_set(pack_t *addr_set, kr_nsrep_lru_t *rttcache, unsign
 
 static int eval_nsrep(const char *k, void *v, void *baton)
 {
+	const knot_dname_t *name = (const knot_dname_t *) k;
 	struct kr_query *qry = baton;
 	struct kr_nsrep *ns = &qry->ns;
 	struct kr_context *ctx = ns->ctx;
 	unsigned score = KR_NS_MAX_SCORE;
-	unsigned reputation = 0;
 	uint8_t *addr_choice[KR_NSREP_MAXADDR] = { NULL, };
 
 	/* Fetch NS reputation */
-	if (ctx->cache_rep) {
-		unsigned *cached = lru_get_try(ctx->cache_rep, k,
-					knot_dname_size((const uint8_t *)k));
-		if (cached) {
-			reputation = *cached;
-		}
-	}
+	unsigned reputation = kr_nsrep_flags_get(ctx, name, qry->timestamp.tv_sec);
 
 	/* Favour nameservers with unknown addresses to probe them,
 	 * otherwise discover the current best address for the NS. */
@@ -154,7 +148,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 	 * at the same time long distance scouts probe other sources (low probability).
 	 * Servers on TIMEOUT (depleted) can be probed by the dice roll only */
 	if (score <= ns->score && (qry->flags & QUERY_NO_THROTTLE || score < KR_NS_TIMEOUT)) {
-		update_nsrep_set(ns, (const knot_dname_t *)k, addr_choice, score);
+		update_nsrep_set(ns, name, addr_choice, score);
 		ns->reputation = reputation;
 	} else {
 		/* With 10% chance, probe server with a probability given by its RTT / MAX_RTT */
@@ -163,7 +157,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 			if (score >= KR_NS_LONG) {
 				qry->flags |= QUERY_TCP;
 			}
-			update_nsrep_set(ns, (const knot_dname_t *)k, addr_choice, score);
+			update_nsrep_set(ns, name, addr_choice, score);
 			ns->reputation = reputation;
 			return 1; /* Stop evaluation */
 		}
@@ -284,18 +278,64 @@ int kr_nsrep_update_rtt(struct kr_nsrep *ns, const struct sockaddr *addr,
 	return kr_ok();
 }
 
-int kr_nsrep_update_rep(struct kr_nsrep *ns, unsigned reputation, kr_nsrep_lru_t *cache)
+
+/** @internal Representation of NS reputation flags with timestamps. */
+typedef struct kr_nsrep_rep {
+	unsigned flags;
+	uint32_t stamps[KR_NS_FLAG_COUNT];
+} rep_t;
+
+int kr_nsrep_flags_set(struct kr_query *qry, unsigned flags)
 {
-	if (!ns || !cache ) {
+	bool ok = qry && qry->timestamp.tv_sec && qry->ns.ctx && qry->ns.ctx->cache_rep
+		&& flags && flags < (1 << KR_NS_FLAG_COUNT);
+	if (!ok) {
+		assert(false);
 		return kr_error(EINVAL);
 	}
 
+	struct kr_nsrep *ns = &qry->ns;
 	/* Store in the struct */
-	ns->reputation = reputation;
-	/* Store reputation in the LRU cache */
-	unsigned *cur = lru_get_new(cache, (const char *)ns->name, knot_dname_size(ns->name));
-	if (cur) {
-		*cur = reputation;
+	ns->reputation |= flags;
+
+	/* Try to store reputation change in the LRU cache. */
+	rep_t *crep = lru_get_new(ns->ctx->cache_rep, (const char *)ns->name,
+				  knot_dname_size(ns->name));
+	if (!crep) {
+		return kr_ok();
+	}
+	crep->flags |= flags;
+
+	/* Update timestamps for the changed reputation flags. */
+	for (unsigned fi = 0; fi < KR_NS_FLAG_COUNT; ++fi) {
+		if (flags & (1u<<fi)) {
+			crep->stamps[fi] = qry->timestamp.tv_sec;
+		}
 	}
 	return kr_ok();
 }
+
+unsigned kr_nsrep_flags_get(const struct kr_context *ctx, const knot_dname_t *name,
+			    uint32_t timestamp)
+{
+	bool ok = ctx && ctx->cache_rep && name && timestamp;
+	if (!ok) {
+		assert(false);
+		return 0; /* plausible fallback */
+	}
+	rep_t *crep = lru_get_try(ctx->cache_rep, (const char *)name,
+				  knot_dname_size(name));
+	if (!crep || !crep->flags) {
+		return 0;
+	}
+	/* Clear flags that have a timestamp older than one day. */
+	unsigned flags = crep->flags;
+	for (unsigned fi = 0; fi < KR_NS_FLAG_COUNT; ++fi) {
+		if (crep->stamps[fi] < timestamp - (uint32_t)(24*60*60)) {
+			/* ^ This intentionally leaves flags with stamps "in future". */
+			flags &= ~(1u<<fi);
+		}
+	}
+	return flags;
+}
+
