@@ -235,7 +235,7 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx)
 #undef ELECT_INIT
 
 int kr_nsrep_update_rtt(struct kr_nsrep *ns, const struct sockaddr *addr,
-			unsigned score, kr_nsrep_lru_t *cache, int umode)
+			unsigned score, kr_nsrep_lru_t *cache, enum kr_ns_umode umode)
 {
 	if (!ns || !cache || ns->addr[0].ip.sa_family == AF_UNSPEC) {
 		return kr_error(EINVAL);
@@ -273,7 +273,7 @@ int kr_nsrep_update_rtt(struct kr_nsrep *ns, const struct sockaddr *addr,
 	case KR_NS_RESET:  *cur = score; break;
 	case KR_NS_ADD:    *cur = MIN(KR_NS_MAX_SCORE - 1, *cur + score); break;
 	case KR_NS_MAX:    *cur = MAX(*cur, score); break;
-	default: break;
+	default: assert(false);
 	}
 	return kr_ok();
 }
