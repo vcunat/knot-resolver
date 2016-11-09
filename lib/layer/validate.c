@@ -99,10 +99,11 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 
 	int ret = 0;
 	int validation_result = 0;
+	bool rrsig_found = false;
 	for (unsigned i = 0; i < vctx->rrs->len; ++i) {
 		ranked_rr_array_entry_t *entry = vctx->rrs->at[i];
 		const knot_rrset_t *rr = entry->rr;
-		if (entry->rank != KR_VLDRANK_INITIAL || entry->yielded) {
+		if ((entry->rank == KR_VLDRANK_SECURE) || entry->yielded) {
 			continue;
 		}
 		if (rr->type == KNOT_RRTYPE_RRSIG) {
@@ -112,6 +113,7 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			} else {
 				entry->rank = KR_VLDRANK_SECURE;
 			}
+			rrsig_found = true;
 			continue;
 		}
 		if ((rr->type == KNOT_RRTYPE_NS) && (vctx->section_id == KNOT_AUTHORITY)) {
@@ -131,7 +133,7 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			entry->rank = KR_VLDRANK_UNKNOWN;
 		}
 	}
-	return ret;
+	return rrsig_found ? kr_ok() : kr_error(ENOENT);
 }
 
 static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_t *pool, bool has_nsec3)
@@ -155,7 +157,8 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 	};
 
 	int ret = validate_section(&vctx, pool);
-	if (ret != 0) {
+	bool an_rrsig_not_found = (ret == kr_error(ENOENT));
+	if (ret != kr_ok() && !an_rrsig_not_found) {
 		return ret;
 	}
 
@@ -168,7 +171,9 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 	vctx.result	  = 0;
 
 	ret = validate_section(&vctx, pool);
-	if (ret != 0) {
+	if (ret == kr_error(ENOENT) && !an_rrsig_not_found) {
+		ret = kr_ok();
+	} else if (ret != kr_ok()) {
 		return ret;
 	}
 
@@ -528,23 +533,23 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 		return KNOT_STATE_FAIL;
 	}
 
-	/* Track difference between current TA and signer name.
-	 * This indicates that the NS is auth for both parent-child, and we must update DS/DNSKEY to validate it.
-	 */
-	const bool track_pc_change = !(qry->flags & QUERY_CACHED);
-	if (track_pc_change) {
-		ret = check_signer(ctx, pkt);
-		if (ret != KNOT_STATE_DONE) {
-			return ret;
-		}
-	}
-
 	/* Check if this is a DNSKEY answer, check trust chain and store. */
 	uint8_t pkt_rcode = knot_wire_get_rcode(pkt->wire);
 	uint16_t qtype = knot_pkt_qtype(pkt);
 	bool has_nsec3 = pkt_has_type(pkt, KNOT_RRTYPE_NSEC3);
 
 	if (knot_wire_get_aa(pkt->wire) && qtype == KNOT_RRTYPE_DNSKEY) {
+		/* Track difference between current TA and signer name.
+		 * This indicates that the NS is auth for both parent-child,
+		 * and we must update DS/DNSKEY to validate it.
+		 */
+		const bool track_pc_change = !(qry->flags & QUERY_CACHED);
+		if (track_pc_change) {
+			ret = check_signer(ctx, pkt);
+			if (ret != KNOT_STATE_DONE) {
+				return ret;
+			}
+		}
 		ret = validate_keyset(req, pkt, has_nsec3);
 		if (ret == kr_error(EAGAIN)) {
 			DEBUG_MSG(qry, ">< cut changed, needs revalidation\n");
@@ -604,7 +609,11 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	 * Do not revalidate data from cache, as it's already trusted. */
 	if (!(qry->flags & QUERY_CACHED)) {
 		ret = validate_records(req, pkt, req->rplan.pool, has_nsec3);
-		if (ret != 0) {
+		if (ret == kr_error(ENOENT)) {
+			/* answer  doesn't contains RRSIGs */
+			DEBUG_MSG(qry, "<= non-secure answer, ask parent for DS\n");
+			return KNOT_STATE_YIELD;
+		} else if (ret != 0) {
 			/* something exepctional - no DNS key, empty pointers etc
 			 * normally it shoudn't happen */
 			DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");

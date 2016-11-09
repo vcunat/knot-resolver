@@ -25,6 +25,7 @@
 #include <libknot/descriptor.h>
 #include <libknot/dname.h>
 #include <libknot/rrtype/rrsig.h>
+#include <libknot/rrset-dump.h>
 
 #include "lib/defines.h"
 #include "lib/utils.h"
@@ -493,4 +494,24 @@ char *kr_module_call(struct kr_context *ctx, const char *module, const char *pro
 		}
 	}
 	return NULL;
+}
+
+void kr_pkt_dump(knot_pkt_t *pkt)
+{
+	char snames[3][11] = {"ANSWER","AUTHORITY","ADDITIONAL"};
+	char rrtype[32];
+	char qname[KNOT_DNAME_MAXLEN];
+	knot_dname_to_str(qname, knot_pkt_qname(pkt), KNOT_DNAME_MAXLEN);
+	knot_rrtype_to_string(knot_pkt_qtype(pkt), rrtype, sizeof(rrtype));
+	printf("QUESTION\n%s\t\t%s\n", qname, rrtype);
+	for (knot_section_t i = KNOT_ANSWER; i <= KNOT_AUTHORITY; ++i) {
+		const knot_pktsection_t *sec = knot_pkt_section(pkt, i);
+		printf("%s\n", snames[i - KNOT_ANSWER]);
+		for (unsigned k = 0; k < sec->count; ++k) {
+			const knot_rrset_t *rr = knot_pkt_rr(sec, k);
+			char rrtext[KNOT_DNAME_MAXLEN * 2] = {0};
+			knot_rrset_txt_dump(rr, rrtext, sizeof(rrtext), &KNOT_DUMP_STYLE_DEFAULT);
+			printf("%s", rrtext);
+		}
+	}
 }

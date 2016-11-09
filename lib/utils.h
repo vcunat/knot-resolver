@@ -183,6 +183,8 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 
 int kr_ranked_rrarray_set_wire(ranked_rr_array_t *array, bool to_wire, uint16_t qry);
 
+void kr_pkt_dump(knot_pkt_t *pkt);
+
 /**
  * Call module property.
  */
