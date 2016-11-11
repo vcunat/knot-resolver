@@ -2,10 +2,11 @@ include config.mk
 include platform.mk
 
 # Targets
-all: info lib daemon modules
-install: lib-install daemon-install modules-install etc-install
+all: info lib daemon client modules
+install: lib-install daemon-install client-install modules-install etc-install
 check: all tests
-clean: contrib-clean lib-clean daemon-clean modules-clean tests-clean doc-clean bench-clean
+clean: contrib-clean lib-clean daemon-clean client-clean modules-clean \
+	tests-clean doc-clean bench-clean
 doc: doc-html
 .PHONY: all install check clean doc info
 
@@ -30,6 +31,7 @@ $(eval $(call find_lib,hiredis,,yes))
 $(eval $(call find_lib,socket_wrapper))
 $(eval $(call find_lib,libsystemd,227))
 $(eval $(call find_lib,gnutls))
+$(eval $(call find_lib,libedit))
 
 # Lookup SONAME
 $(eval $(call find_soname,libknot))
@@ -119,6 +121,7 @@ info:
 	$(info [$(HAS_hiredis)] hiredis (modules/redis))
 	$(info [$(HAS_cmocka)] cmocka (tests/unit))
 	$(info [$(HAS_libsystemd)] systemd (daemon))
+	$(info [$(HAS_libedit)] libedit (client))
 	$(info )
 
 ifeq ($(HAS_libknot),no)
