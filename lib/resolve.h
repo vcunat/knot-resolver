@@ -93,7 +93,7 @@ struct kr_context
 	struct kr_zonecut root_hints;
 	struct kr_cache cache;
 	kr_nsrep_lru_t *cache_rtt;
-	kr_nsrep_lru_t *cache_rep;
+	kr_nsrep_rep_lru_t *cache_rep; /**< NS reputation cache; use kr_nsrep_flags_* */
 	module_array_t *modules;
 	/* The cookie context structure should not be held within the cookies
 	 * module because of better access. */

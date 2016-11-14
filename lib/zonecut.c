@@ -357,9 +357,7 @@ static int fetch_ns(struct kr_context *ctx, struct kr_zonecut *cut, const knot_d
 		const knot_dname_t *ns_name = knot_ns_name(&cached_rr.rrs, i);
 		kr_zonecut_add(cut, ns_name, NULL);
 		/* Fetch NS reputation and decide whether to prefetch A/AAAA records. */
-		unsigned *cached = lru_get_try(ctx->cache_rep,
-				(const char *)ns_name, knot_dname_size(ns_name));
-		unsigned reputation = (cached) ? *cached : 0;
+		unsigned reputation = kr_nsrep_flags_get(ctx, ns_name, timestamp);
 		if (!(reputation & KR_NS_NOIP4) && !(ctx->options & QUERY_NO_IPV4)) {
 			fetch_addr(cut, &ctx->cache, ns_name, KNOT_RRTYPE_A, timestamp);
 		}

@@ -41,27 +41,28 @@ enum kr_ns_score {
 };
 
 /**
- * NS QoS flags.
+ * NS QoS flags.  All cleared by default.
  */
 enum kr_ns_rep {
 	KR_NS_NOIP4  = 1 << 0, /**< NS has no IPv4 */
 	KR_NS_NOIP6  = 1 << 1, /**< NS has no IPv6 */
-	KR_NS_NOEDNS = 1 << 2  /**< NS has no EDNS support */
+	//KR_NS_NOEDNS = 1 << 2, /**< NS has no EDNS support; unused so far */
+	KR_NS_FLAG_COUNT = 2,  /**< The number/range of flags above */
 };
 
 /**
  * NS RTT update modes.
  */
-enum kr_ns_update_mode {
+enum kr_ns_umode {
 	KR_NS_UPDATE = 0, /**< Update as smooth over last two measurements */
 	KR_NS_RESET,      /**< Set to given value */
 	KR_NS_ADD,        /**< Increment current value */
 	KR_NS_MAX         /**< Set to maximum of current/proposed value. */
 };
 
-/**
- * NS reputation/QoS tracking.
- */
+/** NS reputation tracking. */
+typedef lru_t(struct kr_nsrep_rep) kr_nsrep_rep_lru_t;
+/** NS RTT tracking. */
 typedef lru_t(unsigned) kr_nsrep_lru_t;
 
 /* Maximum count of addresses probed in one go (last is left empty) */
@@ -131,20 +132,34 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx);
  * @param  addr         chosen address (NULL for first)
  * @param  score        new score (i.e. RTT), see enum kr_ns_score
  * @param  cache        LRU cache
- * @param  umode        update mode (KR_NS_UPDATE or KR_NS_RESET or KR_NS_ADD)
+ * @param  umode        update mode; see enum kr_ns_umode
  * @return              0 on success, error code on failure
  */
 KR_EXPORT
 int kr_nsrep_update_rtt(struct kr_nsrep *ns, const struct sockaddr *addr,
-			unsigned score, kr_nsrep_lru_t *cache, int umode);
+			unsigned score, kr_nsrep_lru_t *cache, enum kr_ns_umode umode);
 
 /**
- * Update NSSET reputation information.
- * 
- * @param  ns           updated NS representation
- * @param  reputation   combined reputation flags, see enum kr_ns_rep
- * @param  cache        LRU cache
- * @return              0 on success, error code on failure
+ * Set reputation flags for the current NS.
+ *
+ * @param  qry          query where to update .ns.reputation, use its timestamp and cache
+ * @param  reputation   combined reputation flags to set, see enum kr_ns_rep
+ *                      (flags not present are not touched)
+ * @return              0 on success, error code when called badly
  */
 KR_EXPORT
-int kr_nsrep_update_rep(struct kr_nsrep *ns, unsigned reputation, kr_nsrep_lru_t *cache);
+int kr_nsrep_flags_set(struct kr_query *qry, unsigned flags);
+
+
+/**
+ * Get cached NS reputation.
+ *
+ * @param  ctx          context for cache
+ * @param  name         the name to probe
+ * @param  timestamp    current time (in seconds); flags older than a day are cleared
+ * @return              the reputation, defaulting to 0 when not found
+ */
+KR_EXPORT
+unsigned kr_nsrep_flags_get(const struct kr_context *ctx, const knot_dname_t *name,
+			    uint32_t timestamp);
+
