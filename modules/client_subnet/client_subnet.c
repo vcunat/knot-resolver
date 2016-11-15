@@ -6,41 +6,70 @@
 
 #include "lib/client_subnet.h"
 #include "lib/module.h"
+#include "lib/layer.h"
 #include "lib/layer/iterate.h"
 #include "lib/resolve.h"
 #include "lib/rplan.h"
 #include "lib/utils.h"
 
 #define MSG(type, fmt...) kr_log_##type ("[mecs] " fmt)
+#define MSG_QRDEBUG(qry, fmt...) QRDEBUG(qry, "mecs", fmt)
 
-typedef struct kr_ecs data_t;
+static const kr_ecs_t ecs_loc_scope0 = {
+	.loc = "0",
+	.loc_len = 1,
+};
 
-/** Fill kr_query::client_subnet appropriately (a data_t instance). */
+typedef struct kr_ecs_ctx {
+	/*! ECS data; for request, ANS query (except scope_len), and answer. */
+	knot_edns_client_subnet_t query_ecs;
+	bool is_explicit; /*!< ECS was requested by client. */
+	kr_ecs_t loc; /*!< Note: loc_len == 0 means to use qry->ecs = NULL */
+} data_t;
+
+/** Add ECS section into a packet. */
+static int add_ecs_opt(const knot_edns_client_subnet_t *ecs, knot_pkt_t *pkt) {
+	uint8_t *option = NULL;
+	uint16_t option_size = knot_edns_client_subnet_size(ecs);
+	int ret = knot_edns_reserve_option(pkt->opt_rr,
+			KNOT_EDNS_OPTION_CLIENT_SUBNET,
+			option_size, &option, &pkt->mm);
+	if (ret != KNOT_EOK)
+		return ret;
+	if (!option) {
+		assert(false);
+		return KNOT_ERROR;
+	}
+	ret = knot_edns_client_subnet_write(option, option_size, ecs);
+	return ret;
+}
+
+/** Fill kr_request::ecs_ctx appropriately (a data_t instance). */
 static int begin(knot_layer_t *ctx, void *module_param)
 {
+	//FIXME: always check for the ECS option and force FORMERR if bogus
 	(void)module_param;
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
 	assert(!qry->parent && !qry->ecs);
 
 	if (qry->sclass != KNOT_CLASS_IN)
-		return kr_ok();
+		return ctx->state;
 
 	struct kr_module *module = ctx->api->data;
 	MMDB_s *mmdb = module->data;
 	if (!mmdb->filename) /* DB not loaded successfully; go without ECS. */
-		return kr_ok();
+		return ctx->state;
 
 	data_t *data = mm_alloc(&req->pool, sizeof(data_t));
-	qry->ecs = data;
 	req->ecs = data;
 
 	/* TODO: the RFC requires in 12.1 that we should avoid ECS on public suffixes
 	 * https://publicsuffix.org but we only check very roughly (number of labels).
 	 * Perhaps use some library, e.g. http://stricaud.github.io/faup/ */
 	if (knot_dname_labels(qry->sname, NULL) <= 1) {
-		data->loc_len = 0;
-		return kr_ok();
+		data->loc.loc_len = 0;
+		return ctx->state;
 	}
 
 	/* Determine ecs_addr: the address to look up in DB. */
@@ -71,9 +100,9 @@ static int begin(knot_layer_t *ctx, void *module_param)
 
 	/* Explicit /0 special case. */
 	if (data->is_explicit && data->query_ecs.source_len == 0) {
-		data->loc_len = 1;
-		data->loc[0] = '0';
-		return kr_ok();
+		data->loc.loc_len = 1;
+		data->loc.loc[0] = '0';
+		return ctx->state;
 	}
 
 	/* Now try to find a corresponding DB entry and fill data->loc*. */
@@ -90,27 +119,41 @@ static int begin(knot_layer_t *ctx, void *module_param)
 		/* The ISO code is supposed to be two characters. */
 	if (!entry.has_data || entry.type != MMDB_DATA_TYPE_UTF8_STRING || entry.data_size != 2)
 		goto err_not_found;
-	data->loc_len = entry.data_size;
-	memcpy(data->loc, entry.utf8_string, data->loc_len);
-	MSG(debug, "geo DB located query in: %c%c\n", data->loc[0], data->loc[1]);
+	data->loc.loc_len = entry.data_size;
+	memcpy(data->loc.loc, entry.utf8_string, data->loc.loc_len);
+	MSG(debug, "geo DB located query in: %c%c\n", data->loc.loc[0], data->loc.loc[1]);
 
 	/* Esure data->query_ecs contains correct address, source_len, and also
-	 * scope_len for answer. We take the prefix lengths from the database. */
+	 * scope_len for answer. */
+	int max_prefix; // privacy https://tools.ietf.org/html/rfc7871#section-11.1
+	switch (ecs_addr->sa_family) {
+	case AF_INET:
+		max_prefix = 24; break;
+	case AF_INET6:
+		max_prefix = 56; break;
+	default:
+		assert(false);
+		max_prefix = 0;
+	}
 	if (!data->is_explicit) {
 		knot_edns_client_subnet_set_addr(&data->query_ecs,
 						 (struct sockaddr_storage *)ecs_addr);
 			/* ^ not very efficient way but should be OK */
-		data->query_ecs.source_len = lookup_result.netmask;
+		data->query_ecs.source_len = MIN(max_prefix, lookup_result.netmask);
 	}
-	data->query_ecs.scope_len = lookup_result.netmask;
+	data->query_ecs.scope_len = MIN(max_prefix, lookup_result.netmask);
 
-	return kr_ok();
+	if (data->is_explicit) {
+		/* Prepare the ECS section into the answer, as we know it already. */
+		if (add_ecs_opt(&data->query_ecs, req->answer))
+			goto err_generic;
+	}
+
+	return ctx->state;
 
 err_db:
 	MSG(error, "GEO DB failure: %s\n", MMDB_strerror(err));
-	qry->ecs = NULL;
-	mm_free(&req->pool, data);
-	return kr_ok(); /* Go without ECS. */
+	goto err_generic;
 
 err_not_found:;
 	char addr_str[INET6_ADDRSTRLEN];
@@ -120,9 +163,11 @@ err_not_found:;
 		addr_str[0] = '\0';
 	}
 	MSG(debug, "location of client's address not found: '%s'\n", addr_str);
+	/* fall through */
+err_generic:
 	qry->ecs = NULL;
 	mm_free(&req->pool, data);
-	return kr_ok(); /* Go without ECS. */
+	return ctx->state; /* Go without ECS. */
 
 #if 0
 	assert(!qry->ecs);
@@ -140,6 +185,76 @@ err_not_found:;
 #endif
 }
 
+/** Returns whether ECS RR would be added to the packet. */
+static bool maybe_use_ecs(struct kr_request *req)
+{
+	struct kr_query *qry = req->current_query;
+	bool use_ecs = !qry->parent && qry->cut_is_final;
+	MSG_QRDEBUG(qry, "use_ecs: %d\n", (int)use_ecs);
+	qry->ecs = use_ecs ? &req->ecs->loc : NULL;
+
+	if (qry->ns.name) {
+		if (qry->ns.reputation & KR_NS_NOECS) {
+			qry->ecs = &ecs_loc_scope0;
+		} else {
+			if (qry->ecs && qry->ecs->loc_len)
+				return true;
+		}
+	}
+	return false;
+}
+
+static int produce(knot_layer_t *ctx, knot_pkt_t *pkt)
+{
+	struct kr_request *req = ctx->data;
+	if (!ctx || !req || !req->current_query) {
+		assert(false);
+		return ctx->state;
+	}
+	struct kr_query *qry = req->current_query;
+
+	// At this point we can't know for sure if query or answer will get
+	// produced in this round, as the caches (rr+pkt) may intervene.
+	bool add_ecs = maybe_use_ecs(req);
+	if (add_ecs && pkt) {
+		/* If query happens, do include ECS section. */
+		add_ecs_opt(&req->ecs->query_ecs, pkt);
+		MSG_QRDEBUG(qry, "prepared ECS into packet\n");
+	}
+
+	return ctx->state;
+}
+
+static int consume(knot_layer_t *ctx, knot_pkt_t *pkt)
+{
+	struct kr_request *req = ctx->data;
+	if (!ctx || !req || !req->current_query) {
+		assert(false);
+		return ctx->state;
+	}
+	struct kr_query *qry = req->current_query;
+	//MSG(debug, "pending: %d\n", (int)req->rplan.pending.len);
+	
+	bool added_ecs = maybe_use_ecs(req);
+	if (added_ecs && pkt) {
+		MSG_QRDEBUG(qry, "checking answer to an ECS-containing sub-query\n");
+		/*  */
+	}
+	
+
+	if (!req->ecs || (ctx->state & (KNOT_STATE_DONE | KNOT_STATE_FAIL)))
+		return ctx->state;
+
+
+
+	return ctx->state;
+	/*
+	if (qry->parent || !pkt || qry->stype != knot_pkt_qtype(pkt)) {
+		qry->ecs = NULL;
+		return ctx->state;
+	}
+	*/
+}
 
 
 /* Only uninteresting stuff till the end of the file. */
@@ -173,6 +288,8 @@ const knot_layer_api_t *client_subnet_layer(struct kr_module *module)
 {
 	static knot_layer_api_t _layer = {
 		.begin = begin,
+		.produce = produce,
+		.consume = consume,
 		.data = NULL,
 		/* FIXME: add functions for produce and consume,
 		 * and check whether the current sub-query is ECS-worthy

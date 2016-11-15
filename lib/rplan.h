@@ -80,11 +80,13 @@ struct kr_query {
 	struct kr_nsrep ns;
 	struct kr_layer_pickle *deferred;
 
-	/** Data related to client subnet EDNS.  Memory owned by the request.
-	 * @note The value can change to NULL and back, depending on which
-	 * 	sub-query of this query is processed currently.
-	 * TODO: perhaps rename to current_ecs */
-	struct kr_ecs *ecs;
+	/** Client subnet location specifier.  Memory is cared for by the module.
+	 * @note The pointer can change, depending on which sub-query (zone cut)
+	 * of this query is processed currently.
+	 * TODO: name ecs_loc? */
+	const struct kr_ecs *ecs;
+	/** Whether querying for the whole request currently.  Set by iterator mod. */
+	bool cut_is_final;
 };
 
 /** @cond internal Array of queries. */

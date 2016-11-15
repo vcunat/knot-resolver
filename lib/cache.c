@@ -201,7 +201,7 @@ static int check_lifetime(mmentry_t *found, uint32_t *timestamp)
 static int lookup(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
 	uint16_t type, const kr_ecs_t *ecs, struct kr_cache_entry *entry)
 {
-	bool precond = name && cache && entry && (!ecs || ecs->loc_len > 0);
+	bool precond = name && cache && entry;
 	if (!precond) {
 		assert(false);
 		return kr_error(EINVAL);

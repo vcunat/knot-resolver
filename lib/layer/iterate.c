@@ -532,6 +532,9 @@ int kr_make_query(struct kr_query *query, knot_pkt_t *pkt)
 	/* Minimize QNAME (if possible). */
 	uint16_t qtype = query->stype;
 	const knot_dname_t *qname = minimized_qname(query, &qtype);
+	query->cut_is_final = qname == query->sname;
+	QRDEBUG(query, "iter",
+		"   cut_is_final == %s\n", query->cut_is_final ? "true" : "false");
 
 	/* Form a query for the authoritative. */
 	knot_pkt_clear(pkt);

@@ -131,6 +131,7 @@ static int rrcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 	 * it may either be a CNAME chain or direct answer.
 	 * Only one step of the chain is resolved at a time.
 	 */
+	DEBUG_MSG(qry, "=> peek rr\n");
 	struct kr_cache *cache = &req->ctx->cache;
 	int ret = -1;
 	if (qry->stype != KNOT_RRTYPE_ANY) {
@@ -352,10 +353,11 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 
 	{
-		char buf[80];
-		DEBUG_MSG(qry, "=> stash starting\n", buf);
+		DEBUG_MSG(qry, "=> stash starting\n");
 		if (!qry->parent)
 			DEBUG_MSG(qry, "   no parent\n");
+
+		char buf[80];
 		if (knot_dname_to_str(buf, qry->sname, sizeof(buf)))
 			DEBUG_MSG(qry, "   sname: %s\n", buf);
 	}

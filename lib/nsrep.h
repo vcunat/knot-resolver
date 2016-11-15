@@ -46,8 +46,9 @@ enum kr_ns_score {
 enum kr_ns_rep {
 	KR_NS_NOIP4  = 1 << 0, /**< NS has no IPv4 */
 	KR_NS_NOIP6  = 1 << 1, /**< NS has no IPv6 */
-	//KR_NS_NOEDNS = 1 << 2, /**< NS has no EDNS support; unused so far */
-	KR_NS_FLAG_COUNT = 2,  /**< The number/range of flags above */
+	KR_NS_NOECS  = 1 << 2, /**< NS has no support for client-subnet EDNS */
+	//KR_NS_NOEDNS = 1 << ?, /**< NS has no EDNS support; unused so far */
+	KR_NS_FLAG_COUNT = 3,  /**< The number/range of flags above */
 };
 
 /**
