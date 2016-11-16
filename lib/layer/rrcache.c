@@ -110,7 +110,7 @@ static int loot_rrcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_query
 
 static void report_ecs_location(/*const*/ struct kr_query *qry) {
 	if (qry->ecs) {
-		DEBUG_MSG(qry, "=> client subnet location: ");
+		DEBUG_MSG(qry, "   client subnet location: ");
 		kr_log_debug(ECS_LOC_FMT(qry->ecs));
 		kr_log_debug("\n");
 	}
@@ -417,6 +417,8 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 const knot_layer_api_t *rrcache_layer(struct kr_module *module)
 {
 	static const knot_layer_api_t _layer = {
+		/** Note: only the sname is peeked, not any "intermediate steps".
+		 * It does try CNAME on failure and fetches RRSIG if QUERY_DNSSEC_WANT. */
 		.produce = &rrcache_peek,
 		.consume = &rrcache_stash
 	};

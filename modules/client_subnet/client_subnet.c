@@ -23,7 +23,6 @@ static const kr_ecs_t ecs_loc_scope0 = {
 typedef struct kr_ecs_ctx {
 	/*! ECS data; for request, ANS query (except scope_len), and answer. */
 	knot_edns_client_subnet_t query_ecs;
-	bool is_explicit; /*!< ECS was requested by client. */
 	kr_ecs_t loc; /*!< Note: loc_len == 0 means to use qry->ecs = NULL */
 } data_t;
 
@@ -44,68 +43,13 @@ static int add_ecs_opt(const knot_edns_client_subnet_t *ecs, knot_pkt_t *pkt) {
 	return ret;
 }
 
-/** Fill kr_request::ecs_ctx appropriately (a data_t instance). */
-static int begin(knot_layer_t *ctx, void *module_param)
-{
-	//FIXME: always check for the ECS option and force FORMERR if bogus
-	(void)module_param;
-	struct kr_request *req = ctx->data;
-	struct kr_query *qry = req->current_query;
-	assert(!qry->parent && !qry->ecs);
-
-	if (qry->sclass != KNOT_CLASS_IN)
-		return ctx->state;
-
+/** Try to find a corresponding DB entry; fill data->loc* and data->query_ecs.scope_len;
+ * return error code. */
+static int probe_geodb(knot_layer_t *ctx, const struct sockaddr *ecs_addr, data_t *data) {
 	struct kr_module *module = ctx->api->data;
 	MMDB_s *mmdb = module->data;
-	if (!mmdb->filename) /* DB not loaded successfully; go without ECS. */
-		return ctx->state;
-
-	data_t *data = mm_alloc(&req->pool, sizeof(data_t));
-	req->ecs = data;
-
-	/* TODO: the RFC requires in 12.1 that we should avoid ECS on public suffixes
-	 * https://publicsuffix.org but we only check very roughly (number of labels).
-	 * Perhaps use some library, e.g. http://stricaud.github.io/faup/ */
-	if (knot_dname_labels(qry->sname, NULL) <= 1) {
-		data->loc.loc_len = 0;
-		return ctx->state;
-	}
-
-	/* Determine ecs_addr: the address to look up in DB. */
-	const struct sockaddr *ecs_addr = NULL;
-	struct sockaddr_storage ecs_addr_storage;
-       	uint8_t *ecs_wire = req->qsource.opt == NULL ? NULL :
-		knot_edns_get_option(req->qsource.opt, KNOT_EDNS_OPTION_CLIENT_SUBNET);
-	data->is_explicit = ecs_wire != NULL; /* explicit ECS request */
-	if (data->is_explicit) {
-		uint8_t *ecs_data = knot_edns_opt_get_data(ecs_wire);
-		uint16_t ecs_len = knot_edns_opt_get_length(ecs_wire);
-		int err = knot_edns_client_subnet_parse(&data->query_ecs, ecs_data, ecs_len);
-		if (err == KNOT_EOK)
-			err = knot_edns_client_subnet_get_addr(&ecs_addr_storage, &data->query_ecs);
-		if (err != KNOT_EOK || data->query_ecs.scope_len != 0) {
-			MSG(debug, "request with malformed client subnet or family\n");
-			knot_wire_set_rcode(req->answer->wire, KNOT_RCODE_FORMERR);
-			qry->ecs = NULL;
-			mm_free(&req->pool, data);
-			return KNOT_STATE_FAIL | KNOT_STATE_DONE;
-		}
-		ecs_addr = (struct sockaddr *)&ecs_addr_storage;
-	} else {
-		/* We take the full client's address, but that shouldn't matter
-		 * for privacy as we only use the location code inferred from it. */
-		ecs_addr = req->qsource.addr;
-	}
-
-	/* Explicit /0 special case. */
-	if (data->is_explicit && data->query_ecs.source_len == 0) {
-		data->loc.loc_len = 1;
-		data->loc.loc[0] = '0';
-		return ctx->state;
-	}
-
-	/* Now try to find a corresponding DB entry and fill data->loc*. */
+	if (!mmdb->filename)  /* DB not loaded successfully. */
+		return kr_error(ENOENT);
 	int err;
 	MMDB_lookup_result_s lookup_result = MMDB_lookup_sockaddr(mmdb, ecs_addr, &err);
 	if (err != MMDB_SUCCESS)
@@ -116,44 +60,18 @@ static int begin(knot_layer_t *ctx, void *module_param)
 	err = MMDB_get_value(&lookup_result.entry, &entry, "country", "iso_code", NULL);
 	if (err != MMDB_SUCCESS)
 		goto err_db;
-		/* The ISO code is supposed to be two characters. */
+	/* The ISO code is supposed to be two characters. */
 	if (!entry.has_data || entry.type != MMDB_DATA_TYPE_UTF8_STRING || entry.data_size != 2)
 		goto err_not_found;
 	data->loc.loc_len = entry.data_size;
 	memcpy(data->loc.loc, entry.utf8_string, data->loc.loc_len);
 	MSG(debug, "geo DB located query in: %c%c\n", data->loc.loc[0], data->loc.loc[1]);
-
-	/* Esure data->query_ecs contains correct address, source_len, and also
-	 * scope_len for answer. */
-	int max_prefix; // privacy https://tools.ietf.org/html/rfc7871#section-11.1
-	switch (ecs_addr->sa_family) {
-	case AF_INET:
-		max_prefix = 24; break;
-	case AF_INET6:
-		max_prefix = 56; break;
-	default:
-		assert(false);
-		max_prefix = 0;
-	}
-	if (!data->is_explicit) {
-		knot_edns_client_subnet_set_addr(&data->query_ecs,
-						 (struct sockaddr_storage *)ecs_addr);
-			/* ^ not very efficient way but should be OK */
-		data->query_ecs.source_len = MIN(max_prefix, lookup_result.netmask);
-	}
-	data->query_ecs.scope_len = MIN(max_prefix, lookup_result.netmask);
-
-	if (data->is_explicit) {
-		/* Prepare the ECS section into the answer, as we know it already. */
-		if (add_ecs_opt(&data->query_ecs, req->answer))
-			goto err_generic;
-	}
-
-	return ctx->state;
+	data->query_ecs.scope_len = lookup_result.netmask;
+	return kr_ok();
 
 err_db:
 	MSG(error, "GEO DB failure: %s\n", MMDB_strerror(err));
-	goto err_generic;
+	return kr_error(err);
 
 err_not_found:;
 	char addr_str[INET6_ADDRSTRLEN];
@@ -163,26 +81,116 @@ err_not_found:;
 		addr_str[0] = '\0';
 	}
 	MSG(debug, "location of client's address not found: '%s'\n", addr_str);
-	/* fall through */
-err_generic:
-	qry->ecs = NULL;
-	mm_free(&req->pool, data);
-	return ctx->state; /* Go without ECS. */
+	return kr_error(ENOENT);
+}
 
-#if 0
-	assert(!qry->ecs);
-	/* Only consider ECS for original request, not sub-queries. */
-	if (qry->parent)
+/** Fill kr_request::ecs_ctx appropriately (a data_t instance). */
+static int begin(knot_layer_t *ctx, void *module_param)
+{
+	(void)module_param;
+	struct kr_request *req = ctx->data;
+	struct kr_query *qry = req->current_query;
+	assert(!qry->parent && !req->ecs);
+
+	if (qry->sclass != KNOT_CLASS_IN)
 		return ctx->state;
+		// TODO: it's unclear whether/how to react if is_explicit
 
+	/* TODO: the RFC requires in 12.1 that we should avoid ECS on public suffixes
+	 * https://publicsuffix.org but we only check very roughly (number of labels).
+	 * Perhaps use some library, e.g. http://stricaud.github.io/faup/ */
+	bool is_public = knot_dname_labels(qry->sname, NULL) <= 1;
 
-	if (ctx->state & (KNOT_STATE_FAIL|KNOT_STATE_DONE))
-		return ctx->state; /* Already resolved/failed */
-	if (qry->ns.addr[0].ip.sa_family != AF_UNSPEC)
-		return ctx->state; /* Only lookup before asking a query */
+       	uint8_t *ecs_wire = req->qsource.opt == NULL ? NULL :
+		knot_edns_get_option(req->qsource.opt, KNOT_EDNS_OPTION_CLIENT_SUBNET);
+	bool is_explicit = ecs_wire != NULL; /* explicit ECS request */
 
+	data_t *data = req->ecs = (is_public && !is_explicit)
+		? NULL : mm_alloc(&req->pool, sizeof(data_t));
+
+	/* Determine ecs_addr: the address to look up in DB. */
+	const struct sockaddr *ecs_addr = NULL;
+	struct sockaddr_storage ecs_addr_storage;
+	if (is_explicit) {
+		uint8_t *ecs_data = knot_edns_opt_get_data(ecs_wire);
+		uint16_t ecs_len = knot_edns_opt_get_length(ecs_wire);
+		int err = knot_edns_client_subnet_parse(&data->query_ecs, ecs_data, ecs_len);
+		if (err == KNOT_EOK)
+			err = knot_edns_client_subnet_get_addr(&ecs_addr_storage, &data->query_ecs);
+		if (err != KNOT_EOK || data->query_ecs.scope_len != 0) {
+			MSG(debug, "request with malformed client subnet or family\n");
+			knot_wire_set_rcode(req->answer->wire, KNOT_RCODE_FORMERR);
+			req->ecs = NULL;
+			mm_free(&req->pool, data);
+			return KNOT_STATE_FAIL;
+		}
+		ecs_addr = (struct sockaddr *)&ecs_addr_storage;
+		MSG(debug, "explicit ECS record is OK\n");
+	} else {
+		if (req->qsource.opt)
+			MSG(debug, "no OPT records found\n");
+		else
+			MSG(debug, "OPT record(s) found but not ECS\n");
+
+		/* We take the full client's address, but that shouldn't matter
+		 * for privacy as we only use the location code inferred from it. */
+		ecs_addr = req->qsource.addr;
+	}
+
+	/* Prepare data->query_ecs for answer and queries, as necessary. */
+	if (is_public) {
+		/* Answer with scope /0 if ECS was requested. */
+		data->query_ecs.scope_len = 0;
+
+	} else if (is_explicit && data->query_ecs.source_len == 0) {
+		/* Explicit /0 special case. */
+		data->loc.loc_len = 1;
+		data->loc.loc[0] = '0';
+		data->query_ecs.scope_len = 0;
+
+	} else {
+		/* Find location code */
+		if (probe_geodb(ctx, ecs_addr, data) != kr_ok())
+			goto go_without_ecs;
+			// TODO: we SHOULD return REFUSED instead if data->is_explicit (and not /0)
+
+		int max_prefix; // privacy https://tools.ietf.org/html/rfc7871#section-11.1
+		switch (ecs_addr->sa_family) {
+		case AF_INET:
+			max_prefix = 24; break;
+		case AF_INET6:
+			max_prefix = 56; break;
+		default:
+			assert(false);
+			max_prefix = 0;
+		}
+		data->query_ecs.scope_len = MIN(max_prefix, data->query_ecs.scope_len);
+		if (is_explicit) {
+			knot_edns_client_subnet_set_addr(&data->query_ecs,
+							 (struct sockaddr_storage *)ecs_addr);
+				/* ^ not very efficient way but should be OK */
+			data->query_ecs.source_len = data->query_ecs.scope_len;
+		}
+	}
+
+	if (is_explicit) {
+		/* Prepare the ECS section into the answer, as we know it already. */
+		if (add_ecs_opt(&data->query_ecs, req->answer)) {
+			MSG(debug, "failed to prepare ECS into the answer\n");
+			goto go_without_ecs;
+		}
+		MSG(debug, "prepared ECS into the answer\n");
+	}
+
+	if (!is_public) {
+		data->query_ecs.scope_len = 0; /* Ready for out-going queries. */
+		return ctx->state;
+	} /* else fall through */
+
+go_without_ecs: /* no ECS to be used for cache or upstream queries */
+	req->ecs = NULL;
+	mm_free(&req->pool, data);
 	return ctx->state;
-#endif
 }
 
 /** Returns whether ECS RR would be added to the packet. */
