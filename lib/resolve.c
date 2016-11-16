@@ -755,6 +755,7 @@ static int trust_chain_check(struct kr_request *request, struct kr_query *qry)
 		next->flags |= QUERY_AWAIT_CUT|QUERY_DNSSEC_WANT;
 		return KNOT_STATE_DONE;
 	}
+
 	/* Try to fetch missing DNSKEY (either missing or above current cut).
 	 * Do not fetch if this is a DNSKEY subrequest to avoid circular dependency. */
 	const bool is_dnskey_subreq = kr_rplan_satisfies(qry, ta_name, KNOT_CLASS_IN, KNOT_RRTYPE_DNSKEY);

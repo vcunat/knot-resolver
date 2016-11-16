@@ -501,10 +501,26 @@ void kr_pkt_dump(knot_pkt_t *pkt)
 	char snames[3][11] = {"ANSWER","AUTHORITY","ADDITIONAL"};
 	char rrtype[32];
 	char qname[KNOT_DNAME_MAXLEN];
+	printf("==================\nFLAGS ");
+	if (knot_wire_get_aa(pkt->wire))
+		printf("AA ");
+	if (knot_wire_get_rd(pkt->wire))
+		printf("RD ");
+	if (knot_wire_get_tc(pkt->wire))
+		printf("TC ");
+	if (knot_wire_get_qr(pkt->wire))
+		printf("QR ");
+	if (knot_wire_get_cd(pkt->wire))
+		printf("CD ");
+	if (knot_wire_get_ad(pkt->wire))
+		printf("AD ");
+	if (knot_wire_get_ra(pkt->wire))
+		printf("RA ");
+	printf("\n");
 	knot_dname_to_str(qname, knot_pkt_qname(pkt), KNOT_DNAME_MAXLEN);
 	knot_rrtype_to_string(knot_pkt_qtype(pkt), rrtype, sizeof(rrtype));
 	printf("QUESTION\n%s\t\t%s\n", qname, rrtype);
-	for (knot_section_t i = KNOT_ANSWER; i <= KNOT_AUTHORITY; ++i) {
+	for (knot_section_t i = KNOT_ANSWER; i <= KNOT_ADDITIONAL; ++i) {
 		const knot_pktsection_t *sec = knot_pkt_section(pkt, i);
 		printf("%s\n", snames[i - KNOT_ANSWER]);
 		for (unsigned k = 0; k < sec->count; ++k) {
@@ -514,4 +530,19 @@ void kr_pkt_dump(knot_pkt_t *pkt)
 			printf("%s", rrtext);
 		}
 	}
+	printf("==================\n");
+}
+
+void kr_dname_print(const knot_dname_t *name, const char *prefix, const char *postfix)
+{
+	char str[KNOT_DNAME_MAXLEN];
+	knot_dname_to_str(str, name, KNOT_DNAME_MAXLEN);
+	printf ("%s%s%s", prefix, str, postfix);
+}
+
+void kr_rrtype_print(const uint16_t rrtype, const char *prefix, const char *postfix)
+{
+	char str[32];
+	knot_rrtype_to_string(rrtype, str, 32);
+	printf ("%s%s%s", prefix, str, postfix);
 }

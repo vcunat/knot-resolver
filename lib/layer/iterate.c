@@ -282,8 +282,7 @@ static int pick_authority(knot_pkt_t *pkt, struct kr_request *req, bool to_wire)
 	if (referral) {
 		/* zone cut already updated by process_authority()
 		 * use parent zonecut name */
-		assert(qry->zone_cut.parent);
-		zonecut_name = qry->zone_cut.parent->name;
+		zonecut_name = qry->zone_cut.parent ? qry->zone_cut.parent->name : qry->zone_cut.name;
 		to_wire = false;
 	}
 
@@ -343,6 +342,13 @@ static int process_authority(knot_pkt_t *pkt, struct kr_request *req)
 		} else if (rr->type == KNOT_RRTYPE_SOA && knot_dname_is_sub(rr->owner, qry->zone_cut.name)) {
 			/* SOA below cut in authority indicates different authority, but same NS set. */
 			qry->zone_cut.name = knot_dname_copy(rr->owner, &req->pool);
+		}
+	}
+
+	if ((qry->flags & QUERY_DNSSEC_WANT) && (result == KNOT_STATE_CONSUME)) {
+		if (knot_wire_get_aa(pkt->wire) == 0 && knot_wire_get_ancount(pkt->wire) == 0) {
+			/* Prevent from validating as an autoritative answer */
+			result = KNOT_STATE_DONE;
 		}
 	}
 
@@ -705,9 +711,7 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 		break; /* OK */
 	case KNOT_RCODE_REFUSED:
 	case KNOT_RCODE_SERVFAIL: {
-		DEBUG_MSG("<= rcode 1: %s\n", rcode ? rcode->name : "??");
 		if (query->flags & QUERY_STUB) { break; } /* Pass through in stub mode */
-		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
 		query->fails += 1;
 		if (query->fails >= KR_QUERY_NSRETRY_LIMIT) {
 			query->fails = 0; /* Reset per-query counter. */
@@ -719,10 +723,8 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	case KNOT_RCODE_FORMERR:
 	case KNOT_RCODE_NOTIMPL:
-		DEBUG_MSG("<= rcode 2: %s\n", rcode ? rcode->name : "??");
 		return resolve_badmsg(pkt, req, query);
 	default:
-		DEBUG_MSG("<= rcode 3: %s\n", rcode ? rcode->name : "??");
 		return resolve_error(pkt, req);
 	}
 

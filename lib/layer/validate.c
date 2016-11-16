@@ -455,7 +455,17 @@ static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
 		const knot_rrset_t *rr = entry->rr;
 		if (entry->rank == KR_VLDRANK_MISMATCH) {
 			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
-			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
+			if (knot_dname_is_sub(signer_name, qry->zone_cut.name)) {
+				qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
+				qry->flags |= QUERY_AWAIT_CUT;
+			} else if (!knot_dname_is_equal(signer_name, qry->zone_cut.name)) {
+				if (qry->zone_cut.parent) {
+					memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
+				} else {
+					qry->flags |= QUERY_AWAIT_CUT;
+				}
+				qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
+			}
 			DEBUG_MSG(qry, ">< cut changed (new signer), needs revalidation\n");
 			return KNOT_STATE_YIELD;
 		}
