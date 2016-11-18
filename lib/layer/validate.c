@@ -110,6 +110,7 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
 			if (!knot_dname_is_equal(vctx->zone_name, signer_name)) {
 				entry->rank = KR_VLDRANK_MISMATCH;
+				vctx->err_cnt += 1;
 			} else {
 				entry->rank = KR_VLDRANK_SECURE;
 			}
@@ -126,11 +127,10 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 		} else if (validation_result == kr_error(ENOENT)) {
 			/* no RRSIGs found */
 			entry->rank = KR_VLDRANK_INSECURE;
-		} else if (validation_result == kr_error(EBADF)) {
-			/* validation fails */
-			entry->rank = KR_VLDRANK_BAD;
+			vctx->err_cnt += 1;
 		} else {
 			entry->rank = KR_VLDRANK_UNKNOWN;
+			vctx->err_cnt += 1;
 		}
 	}
 	return rrsig_found ? kr_ok() : kr_error(ENOENT);
@@ -153,11 +153,13 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 		.timestamp	= qry->timestamp.tv_sec,
 		.has_nsec3	= has_nsec3,
 		.flags		= 0,
+		.err_cnt	= 0,
 		.result		= 0
 	};
 
 	int ret = validate_section(&vctx, pool);
 	bool an_rrsig_not_found = (ret == kr_error(ENOENT));
+	req->answ_validated = (vctx.err_cnt == 0);
 	if (ret != kr_ok() && !an_rrsig_not_found) {
 		return ret;
 	}
@@ -165,12 +167,12 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 	uint32_t an_flags = vctx.flags;
 	vctx.rrs	  = &req->auth_selected;
 	vctx.section_id   = KNOT_AUTHORITY;
-	/* zone_name can be changed by validate_section(), restore it */
-	vctx.zone_name	  = qry->zone_cut.name;
 	vctx.flags	  = 0;
+	vctx.err_cnt	  = 0;
 	vctx.result	  = 0;
 
 	ret = validate_section(&vctx, pool);
+	req->auth_validated = (vctx.err_cnt == 0);
 	if (ret == kr_error(ENOENT) && !an_rrsig_not_found) {
 		ret = kr_ok();
 	} else if (ret != kr_ok()) {
@@ -620,24 +622,28 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	if (!(qry->flags & QUERY_CACHED)) {
 		ret = validate_records(req, pkt, req->rplan.pool, has_nsec3);
 		if (ret == kr_error(ENOENT)) {
-			/* answer  doesn't contains RRSIGs */
+			/* answer doesn't contains RRSIGs */
 			DEBUG_MSG(qry, "<= non-secure answer, ask parent for DS\n");
 			return KNOT_STATE_YIELD;
 		} else if (ret != 0) {
-			/* something exepctional - no DNS key, empty pointers etc
+			/* something exceptional - no DNS key, empty pointers etc
 			 * normally it shoudn't happen */
 			DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 			return KNOT_STATE_FAIL;
 		}
 		/* check validation state and spawn subrequests */
-		ret = check_validation_result(ctx, &req->answ_selected);
-		if (ret != KNOT_STATE_DONE) {
-			return ret;
+		if (!req->answ_validated) {
+			ret = check_validation_result(ctx, &req->answ_selected);
+			if (ret != KNOT_STATE_DONE) {
+				return ret;
+			}
 		}
-		ret = check_validation_result(ctx, &req->auth_selected);
-		if (ret != KNOT_STATE_DONE) {
-			return ret;
+		if (!req->auth_validated) {
+			ret = check_validation_result(ctx, &req->auth_selected);
+			if (ret != KNOT_STATE_DONE) {
+				return ret;
+			}
 		}
 	}
 

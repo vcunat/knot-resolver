@@ -496,6 +496,13 @@ char *kr_module_call(struct kr_context *ctx, const char *module, const char *pro
 	return NULL;
 }
 
+void kr_rrset_print(const knot_rrset_t *rr)
+{
+	char rrtext[KNOT_DNAME_MAXLEN * 2] = {0};
+	knot_rrset_txt_dump(rr, rrtext, sizeof(rrtext), &KNOT_DUMP_STYLE_DEFAULT);
+	printf("%s", rrtext);
+}
+
 void kr_pkt_dump(knot_pkt_t *pkt)
 {
 	char snames[3][11] = {"ANSWER","AUTHORITY","ADDITIONAL"};
@@ -525,9 +532,7 @@ void kr_pkt_dump(knot_pkt_t *pkt)
 		printf("%s\n", snames[i - KNOT_ANSWER]);
 		for (unsigned k = 0; k < sec->count; ++k) {
 			const knot_rrset_t *rr = knot_pkt_rr(sec, k);
-			char rrtext[KNOT_DNAME_MAXLEN * 2] = {0};
-			knot_rrset_txt_dump(rr, rrtext, sizeof(rrtext), &KNOT_DUMP_STYLE_DEFAULT);
-			printf("%s", rrtext);
+			kr_rrset_print(rr);
 		}
 	}
 	printf("==================\n");

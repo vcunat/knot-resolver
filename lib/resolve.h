@@ -142,6 +142,8 @@ struct kr_request {
 	ranked_rr_array_t answ_selected;
 	ranked_rr_array_t auth_selected;
 	rr_array_t additional;
+	bool answ_validated;
+	bool auth_validated;
 	struct kr_rplan rplan;
 	knot_mm_t pool;
 };
