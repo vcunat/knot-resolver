@@ -416,16 +416,23 @@ int kr_rrarray_add(rr_array_t *array, const knot_rrset_t *rr, knot_mm_t *pool)
 int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 			  uint8_t rank, bool to_wire, uint16_t qry_id, knot_mm_t *pool)
 {
-	/* Check if exists */
+	/* rr always has one record per rrset
+	 * check if another rrset with the same
+	 * rclass/type/owner combination exists within current query
+	 * and merge if needed */
 	for (ssize_t i = array->len - 1; i >= 0; --i) {
 		ranked_rr_array_entry_t *stashed = array->at[i];
-		if (stashed->qry_id == qry_id &&
-		    stashed->rr->rclass == rr->rclass &&
+		if (stashed->yielded) {
+			break;
+		}
+		if (stashed->qry_id != qry_id) {
+			break;
+		}
+		if (stashed->rr->rclass == rr->rclass &&
 		    stashed->rr->type == rr->type &&
 		    knot_dname_is_equal(stashed->rr->owner, rr->owner)) {
 			assert(stashed->rank == rank &&
 			       stashed->cached == false &&
-			       stashed->yielded == false &&
 			       stashed->to_wire == to_wire);
 			/* Merge */
 			return knot_rdataset_merge(&stashed->rr->rrs, &rr->rrs, pool);

@@ -100,11 +100,14 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 	int ret = 0;
 	int validation_result = 0;
 	bool rrsig_found = false;
-	for (unsigned i = 0; i < vctx->rrs->len; ++i) {
+	for (ssize_t i = vctx->rrs->len - 1; i >= 0; --i) {
 		ranked_rr_array_entry_t *entry = vctx->rrs->at[i];
 		const knot_rrset_t *rr = entry->rr;
-		if ((entry->rank == KR_VLDRANK_SECURE) || entry->yielded) {
+		if (entry->rank == KR_VLDRANK_SECURE) {
 			continue;
+		}
+		if (entry->yielded) {
+			break;
 		}
 		if (rr->type == KNOT_RRTYPE_RRSIG) {
 			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
