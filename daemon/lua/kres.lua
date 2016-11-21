@@ -109,6 +109,9 @@ struct query_flag {
 	static const int ALWAYS_CUT  = 1 << 18;
 	static const int PERMISSIVE  = 1 << 20;
 	static const int STRICT      = 1 << 21;
+	static const int BADCOOKIE_AGAIN = 1 << 22;
+	static const int CNAME       = 1 << 23;
+	static const int REORDER_RR  = 1 << 24;
 };
 
 /*
@@ -150,7 +153,7 @@ typedef struct {
 	uint16_t pos;
 	uint16_t count;
 } knot_pktsection_t;
-typedef struct {
+typedef struct { /* some names differ now in knot */
 	uint8_t *wire;
 	size_t size;
 	size_t max_size;
@@ -161,6 +164,10 @@ typedef struct {
 	uint16_t flags;
 	knot_rrset_t *opt;
 	knot_rrset_t *tsig;
+	struct {
+		uint8_t *pos;
+		size_t len;
+	} tsig_wire;
 	knot_section_t _current;
 	knot_pktsection_t _sections[3];
 	size_t _rrset_allocd;
@@ -200,6 +207,7 @@ struct kr_query {
 	uint32_t flags;
 	uint32_t secret;
 	uint16_t fails;
+	uint16_t reorder;
 	struct timeval timestamp;
 	struct kr_zonecut zone_cut;
 	uint8_t _stub[]; /* Do not touch */
@@ -489,7 +497,7 @@ local kres = {
 	section = ffi.new('struct pkt_section'),
 	rcode = ffi.new('struct pkt_rcode'),
 	query = query_flag,
-	NOOP = 0, YIELD = 0, CONSUME = 1, PRODUCE = 2, DONE = 4, FAIL = 8,
+	CONSUME = 1, PRODUCE = 2, DONE = 4, FAIL = 8, YIELD = 16,
 	-- Metatypes
 	pkt_t = function (udata) return ffi.cast('knot_pkt_t *', udata) end,
 	request_t = function (udata) return ffi.cast('struct kr_request *', udata) end,

@@ -116,11 +116,10 @@ static void report_ecs_location(/*const*/ struct kr_query *qry) {
 	}
 }
 
-static int rrcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
+static int rrcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
-	struct kr_request *req = ctx->data;
-	struct kr_query *qry = req->current_query;
-	if (ctx->state & (KNOT_STATE_FAIL|KNOT_STATE_DONE) || (qry->flags & QUERY_NO_CACHE)) {
+	struct kr_query *qry = ctx->req->current_query;
+	if (ctx->state & (KR_STATE_FAIL|KR_STATE_DONE) || (qry->flags & QUERY_NO_CACHE)) {
 		return ctx->state; /* Already resolved/failed */
 	}
 	if (qry->ns.addr[0].ip.sa_family != AF_UNSPEC) {
@@ -132,7 +131,7 @@ static int rrcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 	 * Only one step of the chain is resolved at a time.
 	 */
 	DEBUG_MSG(qry, "=> peek rr\n");
-	struct kr_cache *cache = &req->ctx->cache;
+	struct kr_cache *cache = &ctx->req->ctx->cache;
 	int ret = -1;
 	if (qry->stype != KNOT_RRTYPE_ANY) {
 		ret = loot_rrcache(cache, pkt, qry, qry->stype, (qry->flags & QUERY_DNSSEC_WANT));
@@ -153,7 +152,7 @@ static int rrcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 		pkt->parsed = pkt->size;
 		knot_wire_set_qr(pkt->wire);
 		knot_wire_set_aa(pkt->wire);
-		return KNOT_STATE_DONE;
+		return KR_STATE_DONE;
 	}
 	return ctx->state;
 }
@@ -333,11 +332,11 @@ static int stash_answer(struct kr_query *qry, knot_pkt_t *pkt, map_t *stash, kno
 	return kr_ok();
 }
 
-static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
+static int rrcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
-	struct kr_request *req = ctx->data;
+	struct kr_request *req = ctx->req;
 	struct kr_query *qry = req->current_query;
-	if (!qry || ctx->state & KNOT_STATE_FAIL) {
+	if (!qry || ctx->state & KR_STATE_FAIL) {
 		return ctx->state;
 	}
 	/* Do not cache truncated answers. */
@@ -414,9 +413,9 @@ static int rrcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 }
 
 /** Module implementation. */
-const knot_layer_api_t *rrcache_layer(struct kr_module *module)
+const kr_layer_api_t *rrcache_layer(struct kr_module *module)
 {
-	static const knot_layer_api_t _layer = {
+	static const kr_layer_api_t _layer = {
 		/** Note: only the sname is peeked, not any "intermediate steps".
 		 * It does try CNAME on failure and fetches RRSIG if QUERY_DNSSEC_WANT. */
 		.produce = &rrcache_peek,

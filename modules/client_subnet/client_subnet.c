@@ -45,7 +45,7 @@ static int add_ecs_opt(const knot_edns_client_subnet_t *ecs, knot_pkt_t *pkt) {
 
 /** Try to find a corresponding DB entry; fill data->loc* and data->query_ecs.scope_len;
  * return error code. */
-static int probe_geodb(knot_layer_t *ctx, const struct sockaddr *ecs_addr, data_t *data) {
+static int probe_geodb(kr_layer_t *ctx, const struct sockaddr *ecs_addr, data_t *data) {
 	struct kr_module *module = ctx->api->data;
 	MMDB_s *mmdb = module->data;
 	if (!mmdb->filename)  /* DB not loaded successfully. */
@@ -85,10 +85,9 @@ err_not_found:;
 }
 
 /** Fill kr_request::ecs_ctx appropriately (a data_t instance). */
-static int begin(knot_layer_t *ctx, void *module_param)
+static int begin(kr_layer_t *ctx)
 {
-	(void)module_param;
-	struct kr_request *req = ctx->data;
+	struct kr_request *req = ctx->req;
 	struct kr_query *qry = req->current_query;
 	assert(!qry->parent && !req->ecs);
 
@@ -122,7 +121,7 @@ static int begin(knot_layer_t *ctx, void *module_param)
 			knot_wire_set_rcode(req->answer->wire, KNOT_RCODE_FORMERR);
 			req->ecs = NULL;
 			mm_free(&req->pool, data);
-			return KNOT_STATE_FAIL;
+			return KR_STATE_FAIL;
 		}
 		ecs_addr = (struct sockaddr *)&ecs_addr_storage;
 		MSG(debug, "explicit ECS record is OK\n");
@@ -212,9 +211,9 @@ static bool maybe_use_ecs(struct kr_request *req)
 	return false;
 }
 
-static int produce(knot_layer_t *ctx, knot_pkt_t *pkt)
+static int produce(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
-	struct kr_request *req = ctx->data;
+	struct kr_request *req = ctx->req;
 	if (!ctx || !req || !req->current_query) {
 		assert(false);
 		return ctx->state;
@@ -233,9 +232,9 @@ static int produce(knot_layer_t *ctx, knot_pkt_t *pkt)
 	return ctx->state;
 }
 
-static int consume(knot_layer_t *ctx, knot_pkt_t *pkt)
+static int consume(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
-	struct kr_request *req = ctx->data;
+	struct kr_request *req = ctx->req;
 	if (!ctx || !req || !req->current_query) {
 		assert(false);
 		return ctx->state;
@@ -250,7 +249,7 @@ static int consume(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	
 
-	if (!req->ecs || (ctx->state & (KNOT_STATE_DONE | KNOT_STATE_FAIL)))
+	if (!req->ecs || (ctx->state & (KR_STATE_DONE | KR_STATE_FAIL)))
 		return ctx->state;
 
 
@@ -292,9 +291,9 @@ static void unload(struct kr_module *module)
 
 /** Module implementation. */
 KR_EXPORT
-const knot_layer_api_t *client_subnet_layer(struct kr_module *module)
+const kr_layer_api_t *client_subnet_layer(struct kr_module *module)
 {
-	static knot_layer_api_t _layer = {
+	static kr_layer_api_t _layer = {
 		.begin = begin,
 		.produce = produce,
 		.consume = consume,

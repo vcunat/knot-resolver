@@ -96,11 +96,10 @@ static int loot_pktcache(struct kr_cache *cache, knot_pkt_t *pkt, struct kr_quer
 	return ret;
 }
 
-static int pktcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
+static int pktcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
-	struct kr_request *req = ctx->data;
-	struct kr_query *qry = req->current_query;
-	if (ctx->state & (KNOT_STATE_FAIL|KNOT_STATE_DONE) || (qry->flags & QUERY_NO_CACHE)) {
+	struct kr_query *qry = ctx->req->current_query;
+	if (ctx->state & (KR_STATE_FAIL|KR_STATE_DONE) || (qry->flags & QUERY_NO_CACHE)) {
 		return ctx->state; /* Already resolved/failed */
 	}
 	if (qry->ns.addr[0].ip.sa_family != AF_UNSPEC) {
@@ -112,7 +111,7 @@ static int pktcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 
 	/* Fetch either answer to original or minimized query */
 	uint8_t flags = 0;
-	struct kr_cache *cache = &req->ctx->cache;
+	struct kr_cache *cache = &ctx->req->ctx->cache;
 	int ret = loot_pktcache(cache, pkt, qry, &flags);
 	if (ret == 0) {
 		DEBUG_MSG(qry, "=> satisfied from cache\n");
@@ -123,7 +122,7 @@ static int pktcache_peek(knot_layer_t *ctx, knot_pkt_t *pkt)
 		pkt->parsed = pkt->size;
 		knot_wire_set_qr(pkt->wire);
 		knot_wire_set_aa(pkt->wire);
-		return KNOT_STATE_DONE;
+		return KR_STATE_DONE;
 	}
 	return ctx->state;
 }
@@ -166,13 +165,12 @@ static uint32_t packet_ttl(knot_pkt_t *pkt, bool is_negative)
 	return limit_ttl(ttl);
 }
 
-static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
+static int pktcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
-	struct kr_request *req = ctx->data;
-	struct kr_query *qry = req->current_query;
+	struct kr_query *qry = ctx->req->current_query;
 	/* Cache only answers that make query resolved (i.e. authoritative)
 	 * that didn't fail during processing and are negative. */
-	if (qry->flags & QUERY_CACHED || ctx->state & KNOT_STATE_FAIL) {
+	if (qry->flags & QUERY_CACHED || ctx->state & KR_STATE_FAIL) {
 		return ctx->state; /* Don't cache anything if failed. */
 	}
 	/* Cache only authoritative answers from IN class. */
@@ -216,7 +214,7 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	}
 
 	/* Check if we can replace (allow current or better rank, SECURE is always accepted). */
-	struct kr_cache *cache = &req->ctx->cache;
+	struct kr_cache *cache = &ctx->req->ctx->cache;
 	if (entry.rank < KR_RANK_SECURE) {
 		struct kr_cache_entry cached;
 		cached.timestamp = entry.timestamp;
@@ -236,9 +234,9 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 }
 
 /** Module implementation. */
-const knot_layer_api_t *pktcache_layer(struct kr_module *module)
+const kr_layer_api_t *pktcache_layer(struct kr_module *module)
 {
-	static const knot_layer_api_t _layer = {
+	static const kr_layer_api_t _layer = {
 		.produce = &pktcache_peek,
 		.consume = &pktcache_stash
 	};
