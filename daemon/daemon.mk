@@ -57,7 +57,7 @@ daemon-clean: kresd-clean
 # Client
 ifeq ($(HAS_libedit), yes)
 kresc_SOURCES := daemon/kresc.c
-kresc_CFLAGS += $(libedit_CFLAGS)
+kresc_CFLAGS += -fPIE $(libedit_CFLAGS)
 kresc_LIBS += $(libedit_LIBS)
 $(eval $(call make_sbin,kresc,daemon,yes))
 client: $(kresc)
