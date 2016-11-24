@@ -46,51 +46,55 @@ static int so_reuseport(uv_handle_t *handle) {
  * any path mtu information and not accepting
  * new icmp notifications.
  * It mitigates DNS fragmentation attack.
+ *
+ * FIXME: adjust pkt->max_size whenever setting the don't-fragment flag
  */
 static int no_pmtud(uv_handle_t *handle, sa_family_t family) {
 	uv_os_fd_t fd = 0;
-	if (uv_fileno(handle, &fd) == 0) {
-		int ret;
-
-		if (family == AF_INET6) {
-#if defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_OMIT)
-			int pmtud = IPV6_PMTUDISC_OMIT;
-			if ((ret = setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER,
-					      &pmtud, sizeof(pmtud))) < 0) {
-				return kr_error(errno);
-			}
-#elif defined(IPV6_USE_MIN_MTU)
-			int use_min_mtu = 1;
-			if ((ret = setsockopt(fd, IPPROTO_IPV6, IPV6_USE_MIN_MTU,
-					      &use_min_mtu, sizeof(use_min_mtu))) < 0) {
-				return kr_error(errno);
-			}
-#elif defined(IPV6_MTU)
-			/* fallback to IPV6_MTU if IPV6_USE_MIN_MTU not available */
-			int ipv6_min_mtu = IPV6_MIN_MTU;
-			if((ret = setsockopt(fd, IPPROTO_IPV6, IPV6_MTU,
-						 &ipv6_min_mtu, sizeof(ipv6_min_mtu))) < 0) {
-				return kr_error(errno);
-			}
-#endif
-		} /* family == AF_INET6 */
-		else if (family == AF_INET) {
-#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_OMIT)
-			int pmtud = IP_PMTUDISC_OMIT;
-			if ((ret = setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER,
-					      &pmtud, sizeof(pmtud))) < 0) {
-				return kr_error(errno);
-			}
-#elif defined(IP_DONTFRAG)
-			/* BSDs and others */
-			int dontfrag_off = 0;
-			if ((ret = setsockopt(fd, IPPROTO_IP, IP_DONTFRAG,
-					      &dontfrag_off, sizeof(dontfrag_off))) < 0) {
-				return kr_error(errno);
-			}
-#endif
-		} /* family == AF_INET */
+	int ret = uv_fileno(handle, &fd);
+	if (ret) {
+		return kr_error(ret);
 	}
+
+	if (family == AF_INET6) {
+#if defined(IPV6_MTU) && defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_OMIT)
+		int pmtud = IPV6_PMTUDISC_OMIT;
+		if ((ret = setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER,
+				      &pmtud, sizeof(pmtud))) < 0) {
+			return kr_error(errno);
+		}
+#endif
+#if defined(IPV6_USE_MIN_MTU)
+		int use_min_mtu = 1;
+		if ((ret = setsockopt(fd, IPPROTO_IPV6, IPV6_USE_MIN_MTU,
+				      &use_min_mtu, sizeof(use_min_mtu))) < 0) {
+			return kr_error(errno);
+		}
+#else
+		/* fallback to IPV6_MTU if IPV6_USE_MIN_MTU not available */
+		int ipv6_min_mtu = IPV6_MIN_MTU;
+		if ((ret = setsockopt(fd, IPPROTO_IPV6, IPV6_MTU,
+					 &ipv6_min_mtu, sizeof(ipv6_min_mtu))) < 0) {
+			return kr_error(errno);
+		}
+#endif
+	} /* family == AF_INET6 */
+	else if (family == AF_INET) {
+#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_OMIT)
+		int pmtud = IP_PMTUDISC_OMIT;
+		if ((ret = setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER,
+				      &pmtud, sizeof(pmtud))) < 0) {
+			return kr_error(errno);
+		}
+#elif defined(IP_DONTFRAG)
+		/* BSDs and others */
+		int dontfrag_off = 0;
+		if ((ret = setsockopt(fd, IPPROTO_IP, IP_DONTFRAG,
+				      &dontfrag_off, sizeof(dontfrag_off))) < 0) {
+			return kr_error(errno);
+		}
+#endif // TODO: osx http://stackoverflow.com/q/4415725/587396
+	} /* family == AF_INET */
 	return 0;
 }
 
