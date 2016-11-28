@@ -37,22 +37,12 @@
 
 #define DEBUG_MSG(qry, fmt...) QRDEBUG((qry), "resl",  fmt)
 
-static void set_yield(ranked_rr_array_t *array, uint8_t rank)
+static void set_yield(ranked_rr_array_t *array, const uint32_t qry_uid, const bool yielded)
 {
 	for (unsigned i = 0; i < array->len; ++i) {
 		ranked_rr_array_entry_t *entry = array->at[i];
-//		if (entry->rank == rank) {
-			entry->yielded = true;
-//		}
-	}
-}
-
-static void clear_yield(ranked_rr_array_t *array)
-{
-	for (unsigned i = 0; i < array->len; ++i) {
-		ranked_rr_array_entry_t *entry = array->at[i];
-		if (entry->yielded) {
-			entry->yielded = false;
+		if (entry->qry_uid == qry_uid) {
+			entry->yielded = yielded;
 		}
 	}
 }
@@ -73,8 +63,8 @@ static int consume_yield(knot_layer_t *ctx, knot_pkt_t *pkt)
 		pickle->pkt = pkt_copy;
 		pickle->next = qry->deferred;
 		qry->deferred = pickle;
-		set_yield(&req->answ_selected,KR_VLDRANK_INITIAL);
-		set_yield(&req->auth_selected,KR_VLDRANK_INITIAL);
+		set_yield(&req->answ_selected, qry->uid, true);
+		set_yield(&req->auth_selected, qry->uid, true);
 		return kr_ok();
 	}
 	return kr_error(ENOMEM);
@@ -86,7 +76,7 @@ static int produce_yield(knot_layer_t *ctx, knot_pkt_t *pkt) { return kr_ok(); }
 
 /** @internal Macro for iterating module layers. */
 #define RESUME_LAYERS(from, req, qry, func, ...) \
-    (req)->current_query = (qry); \
+	(req)->current_query = (qry); \
 	for (size_t i = (from); i < (req)->ctx->modules->len; ++i) { \
 		struct kr_module *mod = (req)->ctx->modules->at[i]; \
 		if (mod->layer) { \
@@ -518,7 +508,6 @@ static int resolve_query(struct kr_request *request, const knot_pkt_t *packet)
 	    kr_ta_covers(trust_anchors, qname) && !kr_ta_covers(negative_anchors, qname)) {
 		qry->flags |= QUERY_DNSSEC_WANT;
 	}
-
 	/* Initialize answer packet */
 	knot_pkt_t *answer = request->answer;
 	knot_wire_set_qr(answer->wire);
@@ -788,14 +777,14 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 	 * now it's the time to look up closest zone cut from cache. */
 	if (qry->flags & QUERY_AWAIT_CUT) {
 		/* Want DNSSEC if it's posible to secure this name (e.g. is covered by any TA) */
-		if (!kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
-		    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
-			qry->flags |= QUERY_DNSSEC_WANT;
-		} else {
-			qry->flags &= ~QUERY_DNSSEC_WANT;
-		}
 		int ret = ns_fetch_cut(qry, request, packet);
 		if (ret != 0) {
+			if (!kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
+			    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
+				qry->flags |= QUERY_DNSSEC_WANT;
+			} else {
+				qry->flags &= ~QUERY_DNSSEC_WANT;
+			}
 			/* No cached cut found, start from SBELT and issue priming query. */
 			if (ret == kr_error(ENOENT)) {
 				ret = kr_zonecut_set_sbelt(request->ctx, &qry->zone_cut);
@@ -808,6 +797,12 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 			} else {
 				return KNOT_STATE_FAIL;
 			}
+		}
+		if (!kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
+		    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
+			qry->flags |= QUERY_DNSSEC_WANT;
+		} else {
+			qry->flags &= ~QUERY_DNSSEC_WANT;
 		}
 		/* Update minimized QNAME if zone cut changed */
 		if (qry->zone_cut.name[0] != '\0' && !(qry->flags & QUERY_NO_MINIMIZE)) {
@@ -843,8 +838,8 @@ int kr_resolve_produce(struct kr_request *request, struct sockaddr **dst, int *t
 		DEBUG_MSG(qry, "=> resuming yielded answer\n");
 		struct kr_layer_pickle *pickle = qry->deferred;
 		request->state = KNOT_STATE_YIELD;
-		clear_yield(&request->answ_selected);
-		clear_yield(&request->auth_selected);
+		set_yield(&request->answ_selected, qry->uid, false);
+		set_yield(&request->auth_selected, qry->uid, false);
 		RESUME_LAYERS(layer_id(request, pickle->api), request, qry, consume, pickle->pkt);
 		qry->deferred = pickle->next;
 	} else {

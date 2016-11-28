@@ -414,7 +414,7 @@ int kr_rrarray_add(rr_array_t *array, const knot_rrset_t *rr, knot_mm_t *pool)
 }
 
 int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
-			  uint8_t rank, bool to_wire, uint16_t qry_id, knot_mm_t *pool)
+			  uint8_t rank, bool to_wire, uint32_t qry_uid, knot_mm_t *pool)
 {
 	/* rr always has one record per rrset
 	 * check if another rrset with the same
@@ -425,7 +425,7 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 		if (stashed->yielded) {
 			break;
 		}
-		if (stashed->qry_id != qry_id) {
+		if (stashed->qry_uid != qry_uid) {
 			break;
 		}
 		if (stashed->rr->rclass == rr->rclass &&
@@ -453,7 +453,8 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 	if (!copy) {
 		return kr_error(ENOMEM);
 	}
-	entry->qry_id = qry_id;
+
+	entry->qry_uid = qry_uid;
 	entry->rr = copy;
 	entry->rank = rank;
 	entry->cached = false;
@@ -463,11 +464,11 @@ int kr_ranked_rrarray_add(ranked_rr_array_t *array, const knot_rrset_t *rr,
 	return kr_ok();
 }
 
-int kr_ranked_rrarray_set_wire(ranked_rr_array_t *array, bool to_wire, uint16_t qry_id)
+int kr_ranked_rrarray_set_wire(ranked_rr_array_t *array, bool to_wire, uint32_t qry_uid)
 {
 	for (size_t i = 0; i < array->len; ++i) {
 		ranked_rr_array_entry_t *entry = array->at[i];
-		if (entry->qry_id == qry_id) {
+		if (entry->qry_uid == qry_uid) {
 			entry->to_wire = to_wire;
 		}
 	}
@@ -515,7 +516,10 @@ void kr_pkt_dump(knot_pkt_t *pkt)
 	char snames[3][11] = {"ANSWER","AUTHORITY","ADDITIONAL"};
 	char rrtype[32];
 	char qname[KNOT_DNAME_MAXLEN];
-	printf("==================\nFLAGS ");
+	uint8_t pkt_rcode = knot_wire_get_rcode(pkt->wire);
+	const knot_lookup_t *rcode = NULL;
+	rcode = knot_lookup_by_id(knot_rcode_names, pkt_rcode);
+	printf("==================\nRCODE: %s FLAGS: ", rcode != NULL ? rcode->name : "unknown");
 	if (knot_wire_get_aa(pkt->wire))
 		printf("AA ");
 	if (knot_wire_get_rd(pkt->wire))

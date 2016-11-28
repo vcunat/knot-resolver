@@ -293,7 +293,7 @@ static int pick_authority(knot_pkt_t *pkt, struct kr_request *req, bool to_wire)
 			continue;
 		}
 		int ret = kr_ranked_rrarray_add(&req->auth_selected, rr,
-						rank, to_wire, qry->id, &req->pool);
+						rank, to_wire, qry->uid, &req->pool);
 		if (ret != kr_ok()) {
 			return ret;
 		}
@@ -418,7 +418,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 				}
 			}
 			state = kr_ranked_rrarray_add(&req->answ_selected, rr,
-						      rank, to_wire, query->id, &req->pool);
+						      rank, to_wire, query->uid, &req->pool);
 			if (state != kr_ok()) {
 				return KNOT_STATE_FAIL;
 			}
@@ -434,7 +434,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 			}
 			cname_chain_len += 1;
 			pending_cname = knot_cname_name(&rr->rrs);
-			if (!pending_cname || strict_mode) {
+			if (!pending_cname) {
 				break;
 			}
 			if (cname_chain_len > an->count || cname_chain_len > KR_CNAME_CHAIN_LIMIT) {
@@ -446,6 +446,10 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 		}
 		/* In strict mode, explicitly fetch each CNAME target. */
 		if (strict_mode && pending_cname) {
+			if (knot_dname_is_equal(cname, pending_cname)) {
+				DEBUG_MSG("<= cname chain loop\n");
+				return KNOT_STATE_FAIL;
+			}
 			cname = pending_cname;
 			break;
 		}
@@ -644,6 +648,9 @@ static int prepare_query(knot_layer_t *ctx, knot_pkt_t *pkt)
 		return KNOT_STATE_FAIL;
 	}
 
+	query->uid = req->rplan.next_uid;
+	req->rplan.next_uid += 1;
+
 	return KNOT_STATE_CONSUME;
 }
 
@@ -732,7 +739,7 @@ static int resolve(knot_layer_t *ctx, knot_pkt_t *pkt)
 	int state = process_authority(pkt, req);
 	switch(state) {
 	case KNOT_STATE_CONSUME: /* Not referral, process answer. */
-		DEBUG_MSG("<= rcode 4: %s\n", rcode ? rcode->name : "??");
+		DEBUG_MSG("<= rcode: %s\n", rcode ? rcode->name : "??");
 		state = process_answer(pkt, req);
 		break;
 	case KNOT_STATE_DONE: /* Referral */

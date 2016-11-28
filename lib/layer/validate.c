@@ -99,7 +99,6 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 
 	int ret = 0;
 	int validation_result = 0;
-	bool rrsig_found = false;
 	for (ssize_t i = vctx->rrs->len - 1; i >= 0; --i) {
 		ranked_rr_array_entry_t *entry = vctx->rrs->at[i];
 		const knot_rrset_t *rr = entry->rr;
@@ -114,10 +113,10 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			if (!knot_dname_is_equal(vctx->zone_name, signer_name)) {
 				entry->rank = KR_VLDRANK_MISMATCH;
 				vctx->err_cnt += 1;
+				break;
 			} else {
 				entry->rank = KR_VLDRANK_SECURE;
 			}
-			rrsig_found = true;
 			continue;
 		}
 		if ((rr->type == KNOT_RRTYPE_NS) && (vctx->section_id == KNOT_AUTHORITY)) {
@@ -131,12 +130,14 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			/* no RRSIGs found */
 			entry->rank = KR_VLDRANK_INSECURE;
 			vctx->err_cnt += 1;
+			break;
 		} else {
 			entry->rank = KR_VLDRANK_UNKNOWN;
 			vctx->err_cnt += 1;
+			break;
 		}
 	}
-	return rrsig_found ? kr_ok() : kr_error(ENOENT);
+	return kr_ok();
 }
 
 static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_t *pool, bool has_nsec3)
@@ -163,7 +164,7 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 	int ret = validate_section(&vctx, pool);
 	bool an_rrsig_not_found = (ret == kr_error(ENOENT));
 	req->answ_validated = (vctx.err_cnt == 0);
-	if (ret != kr_ok() && !an_rrsig_not_found) {
+	if (ret != kr_ok()) {
 		return ret;
 	}
 
@@ -176,9 +177,7 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 
 	ret = validate_section(&vctx, pool);
 	req->auth_validated = (vctx.err_cnt == 0);
-	if (ret == kr_error(ENOENT) && !an_rrsig_not_found) {
-		ret = kr_ok();
-	} else if (ret != kr_ok()) {
+	if (ret != kr_ok()) {
 		return ret;
 	}
 
@@ -293,8 +292,14 @@ static int update_parent_keys(struct kr_query *qry, uint16_t answer_type)
 	case KNOT_RRTYPE_DS:
 		DEBUG_MSG(qry, "<= parent: updating DS\n");
 		if (qry->flags & QUERY_DNSSEC_INSECURE) { /* DS non-existence proven. */
-			parent->flags &= ~QUERY_DNSSEC_WANT;
-			parent->flags |= QUERY_DNSSEC_INSECURE;
+			do {
+				parent->flags &= ~QUERY_DNSSEC_WANT;
+				parent->flags |= QUERY_DNSSEC_INSECURE;
+				if (parent->stype != KNOT_RRTYPE_DS) {
+					break;
+				}
+				parent = parent->parent;
+			} while (parent);
 		} else { /* DS existence proven. */
 			parent->zone_cut.trust_anchor = knot_rrset_copy(qry->zone_cut.trust_anchor, parent->zone_cut.pool);
 			if (!parent->zone_cut.trust_anchor) {
@@ -312,7 +317,9 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 	struct kr_zonecut *cut = &qry->zone_cut;
 
 	/* RFC4035 3.1.4. authoritative must send either DS or proof of non-existence.
-	 * If it contains neither, the referral is bogus (or an attempted downgrade attack).
+	 * If it contains neither, resolver must query the parent for the DS (RFC4035 5.2.).
+	 * If DS exists, the referral is OK,
+	 * otherwise referral is bogus (or an attempted downgrade attack).
 	 */
 
 	unsigned section = KNOT_ANSWER;
@@ -346,12 +353,24 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 				/* No-data answer, QTYPE is DS, rfc5155 8.6 */
 				ret = kr_nsec3_no_data(answer, KNOT_AUTHORITY, proved_name, KNOT_RRTYPE_DS);
 			}
-			if (ret == kr_error(DNSSEC_NOT_FOUND)) {
+			if (ret == kr_error(DNSSEC_OUT_OF_RANGE)) {
 				/* Not bogus, going insecure due to optout */
 				ret = 0;
 			}
 		}
-		if (ret != 0) {
+
+		if (!knot_wire_get_aa(answer->wire) &&
+		    qry->stype != KNOT_RRTYPE_DS &&
+		    ret == DNSSEC_NOT_FOUND) {
+			/* referral,
+			 * qtype is not KNOT_RRTYPE_DS, NSEC\NSEC3 were not found.
+			 * Check if DS already was fetched. */
+			knot_rrset_t *ta = cut->trust_anchor;
+			if (knot_dname_is_equal(cut->name, ta->owner)) {
+				/* DS is OK */
+				ret = 0;
+			}
+		} else if (ret != 0) {
 			DEBUG_MSG(qry, "<= bogus proof of DS non-existence\n");
 			qry->flags |= QUERY_DNSSEC_BOGUS;
 		} else {
@@ -404,46 +423,40 @@ static int rrsig_not_found(knot_layer_t *ctx, const knot_rrset_t *rr)
 		qry->flags |= QUERY_DNSSEC_BOGUS;
 		return KNOT_STATE_FAIL;
 	}
-
 	DEBUG_MSG(qry, ">< no RRSIGs found\n");
-	int owner_labels = knot_dname_labels(rr->owner, NULL);
-	int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
-	int skip_labels = owner_labels - matched_labels - 1;
-	const knot_dname_t *new_cut_name_start = rr->owner;
-	while (skip_labels--) {
-		new_cut_name_start = knot_wire_next_label(new_cut_name_start, NULL);
-	}
 	struct kr_zonecut *cut = &qry->zone_cut;
-	if (knot_dname_is_sub(new_cut_name_start, qry->zone_cut.name)) {
-		struct kr_zonecut *parent = mm_alloc(&req->pool, sizeof(*parent));
-		if (parent) {
-			memcpy(parent, cut, sizeof(*parent));
-			kr_zonecut_init(cut, new_cut_name_start, &req->pool);
-			cut->key = parent->key;
-			cut->trust_anchor = parent->trust_anchor;
-			cut->parent = parent;
-		} else {
-			kr_zonecut_set(cut, new_cut_name_start);
+	const knot_dname_t *cut_name_start = qry->zone_cut.name;
+	bool use_cut = true;
+	if (!knot_dname_in(cut_name_start, rr->owner)) {
+		int zone_labels = knot_dname_labels(qry->zone_cut.name, NULL);
+		int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
+		int skip_labels = zone_labels - matched_labels;
+		while (skip_labels--) {
+			cut_name_start = knot_wire_next_label(cut_name_start, NULL);
 		}
-		qry->flags |= QUERY_AWAIT_CUT;
-	} else {
 		/* try to find the name wanted among ancestors */
-		bool cut_found = false;
+		use_cut = false;
 		while (cut->parent) {
 			cut = cut->parent;
-			if (knot_dname_is_equal(new_cut_name_start, cut->name)) {
-				cut_found = true;
+			if (knot_dname_is_equal(cut_name_start, cut->name)) {
+				use_cut = true;
 				break;
 			}
 		};
-		kr_zonecut_init(&qry->zone_cut, new_cut_name_start, &req->pool);
-		if (cut_found) {
-			kr_zonecut_copy(&qry->zone_cut, cut);
-			kr_zonecut_copy_trust(&qry->zone_cut, cut);
-		} else {
-			qry->flags |= QUERY_AWAIT_CUT;
-		}
 	}
+	struct kr_rplan *rplan = &req->rplan;
+	struct kr_query *next = kr_rplan_push(rplan, qry, rr->owner, rr->rclass, KNOT_RRTYPE_RRSIG);
+	if (!next) {
+		return KNOT_STATE_FAIL;
+	}
+	kr_zonecut_init(&next->zone_cut, cut_name_start, &req->pool);
+	if (use_cut) {
+		kr_zonecut_copy(&next->zone_cut, cut);
+		kr_zonecut_copy_trust(&next->zone_cut, cut);
+	} else {
+		next->flags |= QUERY_AWAIT_CUT;
+	}
+	next->flags |= QUERY_DNSSEC_WANT;
 	return KNOT_STATE_YIELD;
 }
 
@@ -452,7 +465,7 @@ static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
 	/* first search for a RRSIGs which signer name is out of current zone. */
-	for (size_t i = 0; i < arr->len; ++i) {
+	for (ssize_t i = arr->len - 1; i >=  0; --i) {
 		ranked_rr_array_entry_t *entry = arr->at[i];
 		if (entry->yielded) {
 			continue;
@@ -476,7 +489,7 @@ static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
 		}
 	}
 	/* search for the other problematic records */
-	for (size_t i = 0; i < arr->len; ++i) {
+	for (ssize_t i = arr->len - 1; i >=  0; --i) {
 		ranked_rr_array_entry_t *entry = arr->at[i];
 		if (entry->yielded) {
 			continue;
@@ -537,7 +550,13 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 
 	/* Pass-through if user doesn't want secure answer or stub. */
 	/* @todo: Validating stub resolver mode. */
-	if (!(qry->flags & QUERY_DNSSEC_WANT) || (qry->flags & QUERY_STUB)) {
+	if (!(qry->flags & QUERY_DNSSEC_WANT)) {
+		if (ctx->state == KNOT_STATE_YIELD) {
+			ctx->state = KNOT_STATE_DONE;
+		}
+		return ctx->state;
+	}
+	if (qry->flags & QUERY_STUB) {
 		return ctx->state;
 	}
 	/* Answer for RRSIG may not set DO=1, but all records MUST still validate. */
@@ -552,6 +571,9 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	uint8_t pkt_rcode = knot_wire_get_rcode(pkt->wire);
 	uint16_t qtype = knot_pkt_qtype(pkt);
 	bool has_nsec3 = pkt_has_type(pkt, KNOT_RRTYPE_NSEC3);
+	const knot_pktsection_t *an = knot_pkt_section(pkt, KNOT_ANSWER);
+	const bool referral = (an->count == 0 && !knot_wire_get_aa(pkt->wire));
+	const bool no_data = (an->count == 0 && knot_wire_get_aa(pkt->wire));
 
 	if (knot_wire_get_aa(pkt->wire) && qtype == KNOT_RRTYPE_DNSKEY) {
 		/* Track difference between current TA and signer name.
@@ -595,8 +617,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	 * doesn't have to worry about NSEC/NSEC3
 	 * @todo rework this */
 	if (!(qry->flags & QUERY_CACHED)) {
-		const knot_pktsection_t *an = knot_pkt_section(pkt, KNOT_ANSWER);
-		if (pkt_rcode == KNOT_RCODE_NOERROR && an->count == 0 && knot_wire_get_aa(pkt->wire)) { 
+		if (pkt_rcode == KNOT_RCODE_NOERROR && no_data) {
 			/* @todo
 			 * ? quick mechanism to determine which check to preform first
 			 * ? merge the functionality together to share code/resources
@@ -607,7 +628,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 				ret = kr_nsec3_no_data(pkt, KNOT_AUTHORITY, knot_pkt_qname(pkt), knot_pkt_qtype(pkt));
 			}
 			if (ret != 0) {
-				if (has_nsec3 && (ret == kr_error(DNSSEC_NOT_FOUND))) {
+				if (has_nsec3 && (ret == kr_error(DNSSEC_OUT_OF_RANGE))) {
 					DEBUG_MSG(qry, "<= can't prove NODATA due to optout, going insecure\n");
 					qry->flags &= ~QUERY_DNSSEC_WANT;
 					qry->flags |= QUERY_DNSSEC_INSECURE;
@@ -624,11 +645,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	 * Do not revalidate data from cache, as it's already trusted. */
 	if (!(qry->flags & QUERY_CACHED)) {
 		ret = validate_records(req, pkt, req->rplan.pool, has_nsec3);
-		if (ret == kr_error(ENOENT)) {
-			/* answer doesn't contains RRSIGs */
-			DEBUG_MSG(qry, "<= non-secure answer, ask parent for DS\n");
-			return KNOT_STATE_YIELD;
-		} else if (ret != 0) {
+		if (ret != 0) {
 			/* something exceptional - no DNS key, empty pointers etc
 			 * normally it shoudn't happen */
 			DEBUG_MSG(qry, "<= couldn't validate RRSIGs\n");
@@ -653,13 +670,28 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Check if wildcard expansion detected for final query.
 	 * If yes, copy authority. */
 	if ((qry->parent == NULL) && (qry->flags & QUERY_DNSSEC_WEXPAND)) {
-		kr_ranked_rrarray_set_wire(&req->auth_selected, true, qry->id);
+		kr_ranked_rrarray_set_wire(&req->auth_selected, true, qry->uid);
 	}
 
 	/* Check and update current delegation point security status. */
 	ret = update_delegation(req, qry, pkt, has_nsec3);
-	if (ret != 0) {
+	if (ret == DNSSEC_NOT_FOUND && qry->stype != KNOT_RRTYPE_DS) {
+		if (ctx->state == KNOT_STATE_YIELD) {
+			DEBUG_MSG(qry, "<= can't validate referral\n");
+			qry->flags |= QUERY_DNSSEC_BOGUS;
+			return KNOT_STATE_FAIL;
+		} else {
+			/* Check the trust chain and query DS\DNSKEY if needed. */
+			DEBUG_MSG(qry, "<= DS\\NSEC was not found, querying for DS\n");
+			return KNOT_STATE_YIELD;
+		}
+	} else if (ret != 0) {
 		return KNOT_STATE_FAIL;
+	} else if (pkt_rcode == KNOT_RCODE_NOERROR &&
+		   referral &&
+		   ((qry->flags & (QUERY_DNSSEC_WANT | QUERY_DNSSEC_INSECURE)) == QUERY_DNSSEC_INSECURE)) {
+		/* referral with proven DS non-existance */
+		qtype = KNOT_RRTYPE_DS;
 	}
 	/* Update parent query zone cut */
 	if (qry->parent) {

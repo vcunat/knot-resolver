@@ -187,7 +187,7 @@ static int pktcache_stash(knot_layer_t *ctx, knot_pkt_t *pkt)
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = (knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
 	const bool is_negative = kr_response_classify(pkt) & (PKT_NODATA|PKT_NXDOMAIN);
-	if (!(is_eligible || is_negative || (qry->flags & QUERY_DNSSEC_WEXPAND))) {
+	if (!(is_eligible || is_negative) && ((qry->flags & QUERY_DNSSEC_WEXPAND) == 0)) {
 		return ctx->state;
 	}
 	uint32_t ttl = packet_ttl(pkt, is_negative);

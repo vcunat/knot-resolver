@@ -146,6 +146,7 @@ struct kr_request {
 	bool auth_validated;
 	struct kr_rplan rplan;
 	knot_mm_t pool;
+	uint32_t next_uid;
 };
 
 /**
