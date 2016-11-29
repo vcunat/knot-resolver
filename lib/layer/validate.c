@@ -464,8 +464,7 @@ static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
 {
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
-	/* first search for a RRSIGs which signer name is out of current zone. */
-	for (ssize_t i = arr->len - 1; i >=  0; --i) {
+	for (ssize_t i = arr->len - 1; i >= 0; --i) {
 		ranked_rr_array_entry_t *entry = arr->at[i];
 		if (entry->yielded) {
 			continue;
@@ -486,16 +485,7 @@ static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
 			}
 			DEBUG_MSG(qry, ">< cut changed (new signer), needs revalidation\n");
 			return KNOT_STATE_YIELD;
-		}
-	}
-	/* search for the other problematic records */
-	for (ssize_t i = arr->len - 1; i >=  0; --i) {
-		ranked_rr_array_entry_t *entry = arr->at[i];
-		if (entry->yielded) {
-			continue;
-		}
-		const knot_rrset_t *rr = entry->rr;
-		if (entry->rank == KR_VLDRANK_INSECURE) {
+		} else if (entry->rank == KR_VLDRANK_INSECURE) {
 			return rrsig_not_found(ctx, rr);
 		} else if (entry->rank != KR_VLDRANK_SECURE) {
 			qry->flags |= QUERY_DNSSEC_BOGUS;

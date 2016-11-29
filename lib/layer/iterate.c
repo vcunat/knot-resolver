@@ -388,7 +388,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
 	bool is_final = (query->parent == NULL);
 	bool can_follow = false;
-	bool strict_mode = (query->flags & QUERY_STRICT) && !(query->flags & QUERY_STUB);
+	bool strict_mode = !(query->flags & QUERY_PERMISSIVE) && !(query->flags & QUERY_STUB);
 	do {
 		/* CNAME was found at previous iteration, but records may not follow the correct order.
 		 * Try to find records for pending_cname owner from section start. */
