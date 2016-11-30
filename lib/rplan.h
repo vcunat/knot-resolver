@@ -80,7 +80,7 @@ struct kr_query {
 	struct kr_nsrep ns;
 	struct kr_layer_pickle *deferred;
 
-	/** Client subnet location specifier.  Memory is cared for by the module.
+	/** Client subnet location specifier for cache.  Memory is cared for by the module.
 	 * @note The pointer can change, depending on which sub-query (zone cut)
 	 * of this query is processed currently.
 	 * TODO: name ecs_loc? */

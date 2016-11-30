@@ -300,6 +300,7 @@ static int edns_erase_and_reserve(knot_pkt_t *pkt)
 
 static int edns_create(knot_pkt_t *pkt, knot_pkt_t *template, struct kr_request *req)
 {
+	assert(!pkt->opt_rr);
 	pkt->opt_rr = knot_rrset_copy(req->ctx->opt_rr, &pkt->mm);
 	size_t wire_size = knot_edns_wire_size(pkt->opt_rr);
 #if defined(ENABLE_COOKIES)
@@ -375,7 +376,7 @@ static int answer_finalize(struct kr_request *request, int state)
 	/* Write EDNS information */
 	int ret = 0;
 	if (answer->opt_rr) {
-		knot_pkt_begin(answer, KNOT_ADDITIONAL);
+		//knot_pkt_begin(answer, KNOT_ADDITIONAL);
 		ret = edns_put(answer);
 	}
 

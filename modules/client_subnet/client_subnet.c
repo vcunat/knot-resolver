@@ -24,13 +24,29 @@ typedef struct kr_ecs_ctx {
 	/*! ECS data; for request, ANS query (except scope_len), and answer. */
 	knot_edns_client_subnet_t query_ecs;
 	kr_ecs_t loc; /*!< Note: loc_len == 0 means to use qry->ecs = NULL */
+	//bool is_explicit;
 } data_t;
 
 /** Add ECS section into a packet. */
 static int add_ecs_opt(const knot_edns_client_subnet_t *ecs, knot_pkt_t *pkt) {
+	if (!ecs || !pkt) {
+		assert(false);
+		return kr_error(EINVAL);
+	}
+
+	size_t wire_size_orig = 0;
+	if (pkt->opt_rr) {
+		wire_size_orig = knot_edns_wire_size(pkt->opt_rr);
+	} else {
+		pkt->opt_rr = mm_alloc(&pkt->mm, sizeof(*pkt->opt_rr));
+		if (!pkt->opt_rr)
+			return kr_error(ENOMEM);
+		knot_edns_init(pkt->opt_rr, KR_EDNS_PAYLOAD, 0, KR_EDNS_VERSION, &pkt->mm);
+	}
+
 	uint8_t *option = NULL;
 	uint16_t option_size = knot_edns_client_subnet_size(ecs);
-	int ret = knot_edns_reserve_option(pkt->opt_rr,
+	int ret = knot_edns_reserve_unique_option(pkt->opt_rr,
 			KNOT_EDNS_OPTION_CLIENT_SUBNET,
 			option_size, &option, &pkt->mm);
 	if (ret != KNOT_EOK)
@@ -40,6 +56,8 @@ static int add_ecs_opt(const knot_edns_client_subnet_t *ecs, knot_pkt_t *pkt) {
 		return KNOT_ERROR;
 	}
 	ret = knot_edns_client_subnet_write(option, option_size, ecs);
+	if (!ret)
+		ret = knot_pkt_reserve(pkt, knot_edns_wire_size(pkt->opt_rr) - wire_size_orig);
 	return ret;
 }
 
@@ -89,7 +107,7 @@ static int begin(kr_layer_t *ctx)
 {
 	struct kr_request *req = ctx->req;
 	struct kr_query *qry = req->current_query;
-	assert(!qry->parent && !req->ecs);
+	assert(!qry->parent && !req->ecs && !qry->ecs);
 
 	if (qry->sclass != KNOT_CLASS_IN)
 		return ctx->state;
@@ -98,13 +116,13 @@ static int begin(kr_layer_t *ctx)
 	/* TODO: the RFC requires in 12.1 that we should avoid ECS on public suffixes
 	 * https://publicsuffix.org but we only check very roughly (number of labels).
 	 * Perhaps use some library, e.g. http://stricaud.github.io/faup/ */
-	bool is_public = knot_dname_labels(qry->sname, NULL) <= 1;
+	bool is_public = knot_dname_labels(qry->sname, NULL) <= 2;
 
        	uint8_t *ecs_wire = req->qsource.opt == NULL ? NULL :
 		knot_edns_get_option(req->qsource.opt, KNOT_EDNS_OPTION_CLIENT_SUBNET);
 	bool is_explicit = ecs_wire != NULL; /* explicit ECS request */
 
-	data_t *data = req->ecs = (is_public && !is_explicit)
+	data_t *data = (is_public && !is_explicit)
 		? NULL : mm_alloc(&req->pool, sizeof(data_t));
 
 	/* Determine ecs_addr: the address to look up in DB. */
@@ -119,9 +137,8 @@ static int begin(kr_layer_t *ctx)
 		if (err != KNOT_EOK || data->query_ecs.scope_len != 0) {
 			MSG(debug, "request with malformed client subnet or family\n");
 			knot_wire_set_rcode(req->answer->wire, KNOT_RCODE_FORMERR);
-			req->ecs = NULL;
-			mm_free(&req->pool, data);
-			return KR_STATE_FAIL;
+			ctx->state = KR_STATE_FAIL;
+			goto go_without_ecs;
 		}
 		ecs_addr = (struct sockaddr *)&ecs_addr_storage;
 		MSG(debug, "explicit ECS record is OK\n");
@@ -139,7 +156,8 @@ static int begin(kr_layer_t *ctx)
 	/* Prepare data->query_ecs for answer and queries, as necessary. */
 	if (is_public) {
 		/* Answer with scope /0 if ECS was requested. */
-		data->query_ecs.scope_len = 0;
+		if (is_explicit)
+			data->query_ecs.scope_len = 0;
 
 	} else if (is_explicit && data->query_ecs.source_len == 0) {
 		/* Explicit /0 special case. */
@@ -171,41 +189,48 @@ static int begin(kr_layer_t *ctx)
 			data->query_ecs.source_len = data->query_ecs.scope_len;
 		}
 	}
-
+	
+	// FIXME
 	if (is_explicit) {
 		/* Prepare the ECS section into the answer, as we know it already. */
 		if (add_ecs_opt(&data->query_ecs, req->answer)) {
-			MSG(debug, "failed to prepare ECS into the answer\n");
+			MSG(error, "failed to prepare ECS into the answer\n");
 			goto go_without_ecs;
 		}
 		MSG(debug, "prepared ECS into the answer\n");
 	}
 
 	if (!is_public) {
+		/* All cases where we want to use ECS will get here. */
 		data->query_ecs.scope_len = 0; /* Ready for out-going queries. */
+		//data->is_explicit = is_explicit;
+		req->ecs = data;
+		qry->ecs = &data->loc; /* for initial cache search */
 		return ctx->state;
 	} /* else fall through */
 
 go_without_ecs: /* no ECS to be used for cache or upstream queries */
-	req->ecs = NULL;
 	mm_free(&req->pool, data);
 	return ctx->state;
 }
 
-/** Returns whether ECS RR would be added to the packet. */
+/** Return whether ECS RR would be added to query packet, and adjust qry->ecs accordingly. */
 static bool maybe_use_ecs(struct kr_request *req)
 {
 	struct kr_query *qry = req->current_query;
-	bool use_ecs = !qry->parent && qry->cut_is_final;
-	MSG_QRDEBUG(qry, "use_ecs: %d\n", (int)use_ecs);
-	qry->ecs = use_ecs ? &req->ecs->loc : NULL;
+	/* First the ECS location for cache. FIXME */
+	//qry->ecs = (qry->ecs && !qry->parent) ? &req->ecs->loc : NULL;
+	//MSG_QRDEBUG(qry, "   ECS for cache: %d\n", (int)(qry->ecs != NULL));
 
-	if (qry->ns.name) {
+	if (req->ecs && qry->ecs && !qry->parent && qry->cut_is_final && qry->ns.name) {
 		if (qry->ns.reputation & KR_NS_NOECS) {
-			qry->ecs = &ecs_loc_scope0;
+			qry->ecs = &ecs_loc_scope0; /* cache as if answered with /0 */
+			MSG_QRDEBUG(qry, "   ECS for upstream - bad reputation\n");
 		} else {
-			if (qry->ecs && qry->ecs->loc_len)
+			if (qry->ecs && qry->ecs->loc_len) {
+				MSG_QRDEBUG(qry, "   ECS for upstream - yes\n");
 				return true;
+			}
 		}
 	}
 	return false;
@@ -216,19 +241,26 @@ static int produce(kr_layer_t *ctx, knot_pkt_t *pkt)
 	struct kr_request *req = ctx->req;
 	if (!ctx || !req || !req->current_query) {
 		assert(false);
-		return ctx->state;
+		return ctx ? ctx->state : KR_STATE_FAIL;
 	}
 	struct kr_query *qry = req->current_query;
 
-	// At this point we can't know for sure if query or answer will get
-	// produced in this round, as the caches (rr+pkt) may intervene.
-	bool add_ecs = maybe_use_ecs(req);
-	if (add_ecs && pkt) {
-		/* If query happens, do include ECS section. */
-		add_ecs_opt(&req->ecs->query_ecs, pkt);
-		MSG_QRDEBUG(qry, "prepared ECS into packet\n");
-	}
+	if (ctx->state & KR_STATE_DONE) {
 
+	} else if (ctx->state & KR_STATE_FAIL) {
+		/* TODO: verify in RFC what ECS should be in answer. */
+	
+	} else if (!(qry->flags & QUERY_CACHED)) {
+		/* Prepare for sending query upstream. */
+		bool add_ecs = maybe_use_ecs(req);
+		if (add_ecs && pkt) {
+			/* If query happens, do include ECS section. */
+			add_ecs_opt(&req->ecs->query_ecs, pkt);
+			MSG_QRDEBUG(qry, "   prepared ECS into query packet\n");
+		}
+	} else {
+		MSG_QRDEBUG(qry, "   default branch\n");
+	}
 	return ctx->state;
 }
 
@@ -244,7 +276,28 @@ static int consume(kr_layer_t *ctx, knot_pkt_t *pkt)
 	
 	bool added_ecs = maybe_use_ecs(req);
 	if (added_ecs && pkt) {
-		MSG_QRDEBUG(qry, "checking answer to an ECS-containing sub-query\n");
+		MSG_QRDEBUG(qry, "   checking answer to an ECS-containing sub-query:\n");
+		uint8_t *ecs_wire = pkt->opt_rr == NULL ? NULL :
+			knot_edns_get_option(pkt->opt_rr, KNOT_EDNS_OPTION_CLIENT_SUBNET);
+
+		if (!ecs_wire) {
+			MSG_QRDEBUG(qry, "     no ECS returned\n");
+		} else {
+			/* Parse the ECS from packet. */
+			knot_edns_client_subnet_t pkt_ecs;
+			uint8_t *ecs_data = knot_edns_opt_get_data(ecs_wire);
+			uint16_t ecs_len = knot_edns_opt_get_length(ecs_wire);
+			int err = knot_edns_client_subnet_parse(&pkt_ecs, ecs_data, ecs_len);
+			if (err) {
+				ecs_wire = NULL;
+			} else {
+				//FIXME: check the address
+			}
+		}
+
+		if (!ecs_wire)
+			/* ECS not good, so flag the NS. */
+			kr_nsrep_flags_set(qry, KR_NS_NOECS); /* ignore EINVAL */
 		/*  */
 	}
 	

@@ -85,9 +85,9 @@ typedef array_t(struct kr_module *) module_array_t;
  *       be shared between threads.
  */
 struct kr_context
-{	
+{
 	uint32_t options;
-	knot_rrset_t *opt_rr;
+	knot_rrset_t *opt_rr; /**< OPT RRs to be prepared into answers. */
 	map_t trust_anchors;
 	map_t negative_anchors;
 	struct kr_zonecut root_hints;
