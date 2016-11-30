@@ -388,7 +388,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 			KR_VLDRANK_SECURE : KR_VLDRANK_INITIAL;
 	bool is_final = (query->parent == NULL);
 	bool can_follow = false;
-	bool strict_mode = !(query->flags & QUERY_PERMISSIVE) && !(query->flags & QUERY_STUB);
+	bool strict_mode = (query->flags & QUERY_STRICT) && !(query->flags & QUERY_STUB);
 	do {
 		/* CNAME was found at previous iteration, but records may not follow the correct order.
 		 * Try to find records for pending_cname owner from section start. */
@@ -444,16 +444,31 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 			/* Don't use pending_cname immediately.
 			 * There are can be records for "old" cname. */
 		}
+		if (!pending_cname) {
+			break;
+		}
+		if (knot_dname_is_equal(cname, pending_cname)) {
+			DEBUG_MSG("<= cname chain loop\n");
+			return KNOT_STATE_FAIL;
+		}
 		/* In strict mode, explicitly fetch each CNAME target. */
-		if (strict_mode && pending_cname) {
-			if (knot_dname_is_equal(cname, pending_cname)) {
-				DEBUG_MSG("<= cname chain loop\n");
-				return KNOT_STATE_FAIL;
-			}
+		if (strict_mode) {
 			cname = pending_cname;
 			break;
 		}
-	} while (pending_cname && can_follow);
+		/* try to unroll cname only within current zone */
+		const int pending_labels = knot_dname_labels(pending_cname, NULL);
+		const int cname_labels = knot_dname_labels(cname, NULL);
+		if (pending_labels != cname_labels) {
+			cname = pending_cname;
+			break;
+		}
+		if (knot_dname_matched_labels(pending_cname, cname) !=
+		    (cname_labels - 1)) {
+			cname = pending_cname;
+			break;
+		}
+	} while (can_follow);
 	*cname_ret = cname;
 	return kr_ok();
 }
