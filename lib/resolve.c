@@ -798,7 +798,8 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 				return KNOT_STATE_FAIL;
 			}
 		}
-		if (!kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
+		if (!(qry->flags & QUERY_DNSSEC_INSECURE) &&
+		    !kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
 		    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
 			qry->flags |= QUERY_DNSSEC_WANT;
 		} else {

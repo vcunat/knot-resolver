@@ -533,6 +533,7 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	int ret = 0;
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
+
 	/* Ignore faulty or unprocessed responses. */
 	if (ctx->state & (KNOT_STATE_FAIL|KNOT_STATE_CONSUME)) {
 		return ctx->state;
@@ -541,11 +542,29 @@ static int validate(knot_layer_t *ctx, knot_pkt_t *pkt)
 	/* Pass-through if user doesn't want secure answer or stub. */
 	/* @todo: Validating stub resolver mode. */
 	if (!(qry->flags & QUERY_DNSSEC_WANT)) {
+		/* Transition to unsecure state
+		   was occured during revalidation  */
 		if (ctx->state == KNOT_STATE_YIELD) {
+			ctx->state = KNOT_STATE_DONE;
+		}
+		/* Got validated insecure answer from cache
+		   Mark parent(s) as insecure */
+		if ((qry->flags & (QUERY_CACHED | QUERY_DNSSEC_INSECURE)) ==
+		    (QUERY_CACHED | QUERY_DNSSEC_INSECURE) &&
+		    qry->parent != NULL) {
+			/* if there is a chain of DS queries, mark all of them */
+			struct kr_query *parent = qry->parent;
+			do {
+				parent->flags &= ~QUERY_DNSSEC_WANT;
+				parent->flags |= QUERY_DNSSEC_INSECURE;
+				parent = parent->parent;
+			} while (parent && parent->stype == KNOT_RRTYPE_DS);
+			DEBUG_MSG(qry, "<= cached insecure response, going insecure\n");
 			ctx->state = KNOT_STATE_DONE;
 		}
 		return ctx->state;
 	}
+
 	if (qry->flags & QUERY_STUB) {
 		return ctx->state;
 	}

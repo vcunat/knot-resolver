@@ -511,7 +511,7 @@ void kr_rrset_print(const knot_rrset_t *rr)
 	printf("%s", rrtext);
 }
 
-void kr_pkt_dump(knot_pkt_t *pkt)
+void kr_pkt_print(knot_pkt_t *pkt)
 {
 	char snames[3][11] = {"ANSWER","AUTHORITY","ADDITIONAL"};
 	char rrtype[32];

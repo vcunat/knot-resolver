@@ -731,6 +731,7 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 			if (nsec3->type != KNOT_RRTYPE_NSEC3) {
 				continue;
 			}
+			nsec3_found = true;
 			/* nsec3 found, check if owner name matches
 			 * the delegation name
 			 */
@@ -744,7 +745,6 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 				 */
 				continue;
 			}
-			nsec3_found = true;
 			knot_nsec3_bitmap(&nsec3->rrs, 0, &bm, &bm_size);
 			if (!bm) {
 				return kr_error(EINVAL);
