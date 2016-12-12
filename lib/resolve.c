@@ -777,14 +777,14 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 	 * now it's the time to look up closest zone cut from cache. */
 	if (qry->flags & QUERY_AWAIT_CUT) {
 		/* Want DNSSEC if it's posible to secure this name (e.g. is covered by any TA) */
+		if (!kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
+		    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
+			qry->flags |= QUERY_DNSSEC_WANT;
+		} else {
+			qry->flags &= ~QUERY_DNSSEC_WANT;
+		}
 		int ret = ns_fetch_cut(qry, request, packet);
 		if (ret != 0) {
-			if (!kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
-			    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
-				qry->flags |= QUERY_DNSSEC_WANT;
-			} else {
-				qry->flags &= ~QUERY_DNSSEC_WANT;
-			}
 			/* No cached cut found, start from SBELT and issue priming query. */
 			if (ret == kr_error(ENOENT)) {
 				ret = kr_zonecut_set_sbelt(request->ctx, &qry->zone_cut);
@@ -798,6 +798,8 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 				return KNOT_STATE_FAIL;
 			}
 		}
+		/* qry->zone_cut.name can change, check it again
+		 * to prevent unnecessary DS & DNSKEY queries */
 		if (!(qry->flags & QUERY_DNSSEC_INSECURE) &&
 		    !kr_ta_covers(negative_anchors, qry->zone_cut.name) &&
 		    kr_ta_covers(trust_anchors, qry->zone_cut.name)) {
