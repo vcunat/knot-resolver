@@ -99,14 +99,11 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 
 	int ret = 0;
 	int validation_result = 0;
-	for (ssize_t i = vctx->rrs->len - 1; i >= 0; --i) {
+	for (ssize_t i = 0; i < vctx->rrs->len; ++i) {
 		ranked_rr_array_entry_t *entry = vctx->rrs->at[i];
 		const knot_rrset_t *rr = entry->rr;
-		if (entry->rank == KR_VLDRANK_SECURE) {
+		if (entry->rank == KR_VLDRANK_SECURE || entry->yielded) {
 			continue;
-		}
-		if (entry->yielded) {
-			break;
 		}
 		if (rr->type == KNOT_RRTYPE_RRSIG) {
 			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
@@ -114,9 +111,8 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 				entry->rank = KR_VLDRANK_MISMATCH;
 				vctx->err_cnt += 1;
 				break;
-			} else {
-				entry->rank = KR_VLDRANK_SECURE;
 			}
+			entry->rank = KR_VLDRANK_SECURE;
 			continue;
 		}
 		if ((rr->type == KNOT_RRTYPE_NS) && (vctx->section_id == KNOT_AUTHORITY)) {
@@ -130,11 +126,9 @@ static int validate_section(kr_rrset_validation_ctx_t *vctx, knot_mm_t *pool)
 			/* no RRSIGs found */
 			entry->rank = KR_VLDRANK_INSECURE;
 			vctx->err_cnt += 1;
-			break;
 		} else {
 			entry->rank = KR_VLDRANK_UNKNOWN;
 			vctx->err_cnt += 1;
-			break;
 		}
 	}
 	return kr_ok();
@@ -462,37 +456,55 @@ static int rrsig_not_found(knot_layer_t *ctx, const knot_rrset_t *rr)
 
 static int check_validation_result(knot_layer_t *ctx, ranked_rr_array_t *arr)
 {
+	int ret = KNOT_STATE_DONE;
 	struct kr_request *req = ctx->data;
 	struct kr_query *qry = req->current_query;
-	for (ssize_t i = arr->len - 1; i >= 0; --i) {
+	const ranked_rr_array_entry_t *invalid_entry = NULL;
+	for (size_t i = 0; i < arr->len; ++i) {
 		ranked_rr_array_entry_t *entry = arr->at[i];
 		if (entry->yielded) {
 			continue;
 		}
-		const knot_rrset_t *rr = entry->rr;
 		if (entry->rank == KR_VLDRANK_MISMATCH) {
-			const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
-			if (knot_dname_is_sub(signer_name, qry->zone_cut.name)) {
-				qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
-				qry->flags |= QUERY_AWAIT_CUT;
-			} else if (!knot_dname_is_equal(signer_name, qry->zone_cut.name)) {
-				if (qry->zone_cut.parent) {
-					memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
-				} else {
-					qry->flags |= QUERY_AWAIT_CUT;
-				}
-				qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
-			}
-			DEBUG_MSG(qry, ">< cut changed (new signer), needs revalidation\n");
-			return KNOT_STATE_YIELD;
-		} else if (entry->rank == KR_VLDRANK_INSECURE) {
-			return rrsig_not_found(ctx, rr);
-		} else if (entry->rank != KR_VLDRANK_SECURE) {
-			qry->flags |= QUERY_DNSSEC_BOGUS;
-			return KNOT_STATE_FAIL;
+			invalid_entry = entry;
+			break;
+		} else if (entry->rank == KR_VLDRANK_INSECURE &&
+			   !invalid_entry) {
+			invalid_entry = entry;
+		} else if (entry->rank != KR_VLDRANK_SECURE &&
+			   !invalid_entry) {
+			invalid_entry = entry;
 		}
 	}
-	return KNOT_STATE_DONE;
+
+	if (!invalid_entry) {
+		return ret;
+	}
+
+	const knot_rrset_t *rr = invalid_entry->rr;
+	if (invalid_entry->rank == KR_VLDRANK_MISMATCH) {
+		const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
+		if (knot_dname_is_sub(signer_name, qry->zone_cut.name)) {
+			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
+			qry->flags |= QUERY_AWAIT_CUT;
+		} else if (!knot_dname_is_equal(signer_name, qry->zone_cut.name)) {
+			if (qry->zone_cut.parent) {
+				memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
+			} else {
+				qry->flags |= QUERY_AWAIT_CUT;
+			}
+			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
+		}
+		DEBUG_MSG(qry, ">< cut changed (new signer), needs revalidation\n");
+		ret = KNOT_STATE_YIELD;
+	} else if (invalid_entry->rank == KR_VLDRANK_INSECURE) {
+		ret = rrsig_not_found(ctx, rr);
+	} else if (invalid_entry->rank != KR_VLDRANK_SECURE) {
+		qry->flags |= QUERY_DNSSEC_BOGUS;
+		ret = KNOT_STATE_FAIL;
+	}
+
+	return ret;
 }
 
 static int check_signer(knot_layer_t *ctx, knot_pkt_t *pkt)
