@@ -131,6 +131,9 @@ static int rrcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 	if (qry->ns.addr[0].ip.sa_family != AF_UNSPEC) {
 		return ctx->state; /* Only lookup before asking a query */
 	}
+	if (qry->sclass != KNOT_CLASS_IN) {
+		return ctx->state; /* Do not cache other classes; they would mix up. */
+	}
 	const bool cd_is_set = knot_wire_get_cd(req->answer->wire);
 	/* Reconstruct the answer from the cache,
 	 * it may either be a CNAME chain or direct answer.
@@ -364,6 +367,9 @@ static int rrcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 	/* Do not cache truncated answers. */
 	if (knot_wire_get_tc(pkt->wire)) {
 		return ctx->state;
+	}
+	if (qry->sclass != KNOT_CLASS_IN) {
+		return ctx->state; /* Do not cache other classes; they would mix up. */
 	}
 
 	/* Cache only positive answers, not meta types or RRSIG. */
