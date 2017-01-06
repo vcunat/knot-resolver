@@ -191,6 +191,9 @@ static int commit_rr(const char *key, void *val, void *data)
 		if (knot_rdata_ttl(rd) < baton->min_ttl) {
 			knot_rdata_set_ttl(rd, baton->min_ttl);
 		}
+		if (knot_rdata_ttl(rd) > 30) {
+			knot_rdata_set_ttl(rd, 30);
+		}
 		rd = kr_rdataset_next(rd);
 	}
 
