@@ -236,11 +236,18 @@ static void _tcp_accept(uv_stream_t *master, int status, bool tls)
 	if (status != 0) {
 		return;
 	}
+	if (master->data - NULL <= 0) { /* might be negative if limit got lowered */
+		kr_log_verbose("[ io ] TCP connection dropped; watermark %d",
+				(int)(master->data - NULL));
+		return; /* too many connections is being kept */
+	}
 	uv_stream_t *client = handle_alloc(master->loop);
 	if (!client) {
 		return;
 	}
 	memset(client, 0, sizeof(*client));
+	master->data -= 1;
+	client->data = &master->data; /* so it can increment on closing */
 	io_create(master->loop, (uv_handle_t *)client, SOCK_STREAM);
 	if (uv_accept(master, client) != 0) {
 		uv_close((uv_handle_t *)client, io_free);
@@ -315,6 +322,9 @@ static int _tcp_bind(uv_tcp_t *handle, struct sockaddr *addr, uv_connection_cb c
 	}
 #endif
 
+	/* Limit the number of connections processed at once; per-socket. */
+	handle->data = NULL + 3;
+
 	ret = uv_listen((uv_stream_t *)handle, 16, connection);
 	if (ret != 0) {
 		return ret;
@@ -386,6 +396,9 @@ void io_deinit(uv_handle_t *handle)
 		session_release(worker, handle->data);
 	} else {
 		session_free(handle->data);
+	}
+	if (handle->type == UV_TCP) {
+		*(void **)handle->data -= 1; /* open connection counter */
 	}
 	handle->data = NULL;
 }
