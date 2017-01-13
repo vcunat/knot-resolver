@@ -40,7 +40,7 @@ local function parse_target(target)
 	port = port and tonumber(port) or 53
 	addr = kres.str2ip(addr)
 	if addr == nil then
-		error("target '"..target..'" is not a valid IP address')
+		warn("policy module: target '"..target..'" is not a valid IP address')
 	end
 	return addr, port
 end
@@ -48,6 +48,7 @@ end
 -- Mirror request elsewhere, and continue solving
 local function mirror(target)
 	local addr, port = parse_target(target)
+	if not addr then return end
 	local sink, err = socket_client(addr, port)
 	if not sink then panic('MIRROR target %s is not a valid: %s', target, err) end
 	return function(state, req)
@@ -64,14 +65,23 @@ end
 -- Forward request, and solve as stub query
 local function forward(target)
 	local list = {}
-	if type(target) == 'table' then
-		for _, v in pairs(target) do
-			table.insert(list, {parse_target(v)})
-			assert(#list <= 4, 'at most 4 FORWARD targets are supported')
-		end
-	else
-		table.insert(list, {parse_target(target)})
+	if type(target) ~= 'table' then
+		target = { target }
 	end
+
+	-- Use the first four parseable addresses (at most)
+	for _, v in pairs(target) do
+		if #list >= 4 then
+			warn("policy module: at most 4 FORWARD targets are supported; dropping '"
+				.. v .. "'")
+		else
+			local addr, port = parse_target(v)
+			if addr then
+				table.insert(list, {addr, port})
+			end
+		end
+	end
+
 	return function(state, req)
 		req = kres.request_t(req)
 		local qry = req:current()
