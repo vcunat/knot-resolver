@@ -14,15 +14,104 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <assert.h>
+#include <editline/readline.h>
+#include <histedit.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
 
+
+#define HISTORY_FILE ".kresc_history"
+#define PROGRAM_NAME "kresc"
+
 FILE *g_tty = NULL; //!< connection to the daemon
+
+static char *run_cmd(const char *cmd, uint32_t *msg_len);
+
+char * prompt(EditLine *e) {
+  return PROGRAM_NAME"> ";
+}
+
+
+bool starts_with(const char *a, const char *b)
+{
+   if(strncmp(a, b, strlen(b)) == 0) return 1;
+   return 0;
+}
+
+
+static unsigned char complete(EditLine *el, int ch)
+{
+	int argc, token, pos;
+	const char **argv;
+	const LineInfo *li = el_line(el);
+	Tokenizer *tok = tok_init(NULL);
+	// Parse the line.
+	int ret = tok_line(tok, li, &argc, &argv, &token, &pos);
+	
+	
+	uint32_t msg_len;
+	
+	char *help = run_cmd("help()", &msg_len);
+	if (!help) {
+		perror("While communication with daemon");
+		goto complete_exit;
+	}
+	
+	if (ret != 0) {
+		goto complete_exit;
+	}
+	
+	if(argc == 0) {
+		printf("\n%s", help);
+	}
+	
+	char * lines;
+	lines = strtok(help, "\n");
+	int matches = 0;
+	bool exactmatch = 0;
+	char *lastmatch;
+	int i = 0;
+	while (lines != NULL) {
+		if(!(i % 2))
+			if(argv[0] && starts_with(lines, argv[0]))
+			{
+				printf("\n%s",lines);
+				lastmatch = lines;
+				matches++;
+				if(!strcmp(lines, argv[0]))
+					exactmatch = 1;
+			}
+		lines = strtok (NULL, "\n");
+		i++;
+	}
+	printf("\n");
+	if(matches == 1) {
+		char * brace = strchr(lastmatch, '(');
+		if(brace != NULL)
+			*(brace+1) = '\0';
+		el_deletestr(el, pos);
+		el_insertstr(el, lastmatch);
+		pos = strlen(lastmatch) ;
+		if(exactmatch && brace == NULL){
+			char *prettyprint = run_cmd(lastmatch, &msg_len);
+			printf("%s", prettyprint);
+			el_insertstr(el, ".");
+			free(prettyprint);
+		}
+	}
+
+complete_exit:
+	free(help);
+	tok_reset(tok);
+	tok_end(tok);
+	return CC_REDISPLAY;
+}
 
 //! Initialize connection to the daemon; return 0 on success.
 static int init_tty(const char *path)
@@ -61,7 +150,7 @@ static int init_tty(const char *path)
 }
 
 //! Run a command on the daemon; return the answer or NULL on failure.
-static char *run_cmd(const char *cmd)
+static char *run_cmd(const char *cmd, uint32_t *msg_len)
 {
 	if (!g_tty || !cmd) {
 		assert(false);
@@ -79,27 +168,65 @@ static char *run_cmd(const char *cmd)
 		free(msg);
 		return NULL;
 	}
+	*msg_len = len;
+	printf("cmd: %s\n", cmd);
 	return msg;
 }
 
-//! Prototype; TODO: editline.
 static int interact()
 {
-	char *buf = NULL;
-	size_t buf_len = 0;
-	ssize_t len;
-	while (getline(&buf, &buf_len, stdin) >= 0) {
-		char *msg = run_cmd(buf);
-		if (!msg) {
-			perror("While communication with daemon");
-			free(buf);
-			return 1;
-		}
-		printf("%s", msg);
-		free(msg);
-	}
-	free(buf);
 
+	EditLine *el;
+	History *hist;
+	int count;
+	const char *line;
+	int keepreading = 1;
+	HistEvent ev;
+	el = el_init(PROGRAM_NAME, stdin, stdout, stderr);
+	el_set(el, EL_PROMPT, &prompt);
+	el_set(el, EL_EDITOR, "emacs");
+	el_set(el, EL_ADDFN, PROGRAM_NAME"-complete",
+	       "Perform "PROGRAM_NAME" completion.", complete);
+	el_set(el, EL_BIND, "^I",  PROGRAM_NAME"-complete", NULL);
+
+	hist = history_init();
+	if (hist == 0) {
+		perror("While initializing command history");
+		return 1;
+	}
+	history(hist, &ev, H_SETSIZE, 800);
+	el_set(el, EL_HIST, history, hist);
+
+
+	const char hist_file[] = HISTORY_FILE;
+	history(hist, &ev, H_LOAD, hist_file);
+
+
+	while (keepreading) {
+		line = el_gets(el, &count);
+			if (count > 0) {
+			history(hist, &ev, H_ENTER, line);
+			uint32_t msg_len;
+			char *msg = run_cmd(line, &msg_len);
+			if (!msg) {
+				perror("While communication with daemon");
+				history_end(hist);
+				el_end(el);
+				free(msg);
+				return 1;
+			}
+			printf("%s", msg); //prints EOT, \007F and other weird chars at the end for some reason.
+			if(msg[msg_len-1] != '\n') {
+				printf("\n");
+			}
+			printf("%d\n", msg_len);
+			history(hist, &ev, H_SAVE, hist_file);
+
+			free(msg);
+		}
+	}
+	history_end(hist);
+	el_end(el);
 	if (feof(stdin))
 		return 0;
 	perror("While reading input");
