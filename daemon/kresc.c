@@ -163,10 +163,10 @@ static char *run_cmd(const char *cmd, uint32_t *msg_len)
 	uint32_t len;
 	if (!fread(&len, sizeof(len), 1, g_tty))
 		return NULL;
-	char *msg = malloc(len + 1);
+	char *msg = malloc(1 + (size_t)len);
 	if (!msg)
 		return NULL;
-	if (!fread(msg, len, 1, g_tty)) {
+	if (len && !fread(msg, len, 1, g_tty)) {
 		free(msg);
 		return NULL;
 	}
@@ -218,7 +218,7 @@ static int interact()
 				return 1;
 			}
 			printf("%s", msg);
-			if(msg[msg_len-1] != '\n') {
+			if (msg_len == 0 || msg[msg_len-1] != '\n') {
 				printf("\n");
 			}
 			printf("%d\n", msg_len);
