@@ -156,20 +156,22 @@ static char *run_cmd(const char *cmd, uint32_t *msg_len)
 		assert(false);
 		return NULL;
 	}
+	printf("cmd: %s\n", cmd);
+
 	if (fprintf(g_tty, "%s", cmd) < 0 || fflush(g_tty))
 		return NULL;
 	uint32_t len;
 	if (!fread(&len, sizeof(len), 1, g_tty))
 		return NULL;
-	char *msg = malloc(len);
+	char *msg = malloc(len + 1);
 	if (!msg)
 		return NULL;
 	if (!fread(msg, len, 1, g_tty)) {
 		free(msg);
 		return NULL;
 	}
+	msg[len] = '\0';
 	*msg_len = len;
-	printf("cmd: %s\n", cmd);
 	return msg;
 }
 
@@ -215,7 +217,7 @@ static int interact()
 				free(msg);
 				return 1;
 			}
-			printf("%s", msg); //prints EOT, \007F and other weird chars at the end for some reason.
+			printf("%s", msg);
 			if(msg[msg_len-1] != '\n') {
 				printf("\n");
 			}
