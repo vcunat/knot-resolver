@@ -155,7 +155,7 @@ static unsigned char complete(EditLine *el, int ch)
 		free(globals_tok);
 		
 	//Current line (or part of it) is a name of some table.
-	} else if(dot || !strncmp(type, "table", 5)) {
+	} else if((dot && !strncmp(type, "nil", 3)) || !strncmp(type, "table", 5)) {
 		char *table = strdup(argv[0]);
 		if(!table) {
 			perror("While tab-completing");
