@@ -107,7 +107,7 @@ static unsigned char complete(EditLine *el, int ch)
 	}
 	
 	//Get name of type of current line.
-	char *type = get_type_name(argv[0]);
+	const char *type = get_type_name(argv[0]);
 	
 	if(!type) {
 		goto complete_exit;
@@ -124,19 +124,22 @@ static unsigned char complete(EditLine *el, int ch)
 		if(!globals) {
 			goto complete_exit;
 		}
-		
 		//Show possible globals.
-		char *lines = strtok(globals, "\n");
+		char *globals_tok = strdup(globals);
 		free(globals);
+		if(!globals_tok) {
+			goto complete_exit;
+		}
+		char *token = strtok(globals_tok, "\n");
 		int matches = 0;
 		char *lastmatch;
-		while (lines) {
-			if(argv[0] && starts_with(lines, argv[0])) {
-					printf("\n%s (%s)",lines,get_type_name(lines));
-					lastmatch = lines;
+		while (token) {
+			if(argv[0] && starts_with(token, argv[0])) {
+					printf("\n%s (%s)",token,get_type_name(token));
+					lastmatch = token;
 					matches++;
 			}
-			lines = strtok (NULL, "\n");
+			token = strtok (NULL, "\n");
 		}
 		
 		//Complete matching global.
@@ -145,13 +148,19 @@ static unsigned char complete(EditLine *el, int ch)
 			el_insertstr(el, lastmatch);
 			pos = strlen(lastmatch);
 		}
+		free(globals_tok);
 		
 	//Current line (or part of it) is a name of some table.
 	} else if(dot || !strncmp(type, "table", 5)) {
-		char *table = argv[0];
+		char *table = strdup(argv[0]);
+		if(!table) {
+			perror("While while tab-completing");
+			goto complete_exit;
+		}
 		
 		//Get only the table name (without partial member name).
-		if(dot) {
+		if(dot)
+		{
 			*(table+(dot-argv[0])) = '\0';
 		}
 		
@@ -162,7 +171,7 @@ static unsigned char complete(EditLine *el, int ch)
 		}
 		
 		//Check if the substring before dot is a valid table name.
-		char* t_type = get_type_name(table);
+		const char* t_type = get_type_name(table);
 		if(t_type && !strncmp("table",t_type,5)) {
 			//Get string of members of the table.
 			char *cmd = afmt("do local s=\"\"; for i in pairs(%s) do s=s..i..\"\\n\" end return(s) end", table);
@@ -178,26 +187,30 @@ static unsigned char complete(EditLine *el, int ch)
 			}
 			
 			//Split members by newline.
-			char *lines = strtok(members, "\n");
+			char *members_tok = strdup(members);
 			free(members);
+			if(!members_tok) {
+				goto complete_exit;
+			}
+			char *token = strtok(members_tok, "\n");
 			int matches = 0;
 			char *lastmatch;
-			
-			if(!dot) {
+			if(!dot || dot-argv[0] == strlen(argv[0])-1) {
 				//Prints all members.
-				while (lines) {
-					printf("\n%s.%s (%s)",table,lines,get_type_name(afmt("%s.%s",table,lines)));
-					lines = strtok (NULL, "\n");
+				while (token) {
+					char *member = afmt("%s.%s",table,token);
+					printf("\n%s (%s)",member,get_type_name(member));
+					token = strtok (NULL, "\n");
 				}
 			} else {
 				//Print members matching the current line.
-				while (lines) {
-					if(argv[0] && starts_with(lines, dot+1)) {
-							printf("\n%s.%s (%s)",table,lines,get_type_name(afmt("%s.%s",table,lines)));
-							lastmatch = lines;
+				while (token) {
+					if(argv[0] && starts_with(token, dot+1)) {
+							printf("\n%s.%s (%s)",table,token,get_type_name(afmt("%s.%s",table,token)));
+							lastmatch = token;
 							matches++;
 					}
-					lines = strtok (NULL, "\n");
+					token = strtok (NULL, "\n");
 				}
 				
 				//Complete matching member.
@@ -209,6 +222,7 @@ static unsigned char complete(EditLine *el, int ch)
 					pos = strlen(lastmatch) + strlen(table) + 1;
 				}
 			}
+			free(members_tok);
 		}
 	} else if(!strncmp(type, "function", 8))
 	{
@@ -216,7 +230,6 @@ static unsigned char complete(EditLine *el, int ch)
 		el_insertstr(el, "(");
 		pos++;
 	}
-	free(type);
 
 complete_exit:
 	tok_reset(tok);
