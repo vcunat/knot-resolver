@@ -65,6 +65,7 @@ ifeq ($(HAS_libedit), yes)
 kresc_SOURCES := daemon/kresc.c
 kresc_CFLAGS += -fPIE $(libedit_CFLAGS)
 kresc_LIBS += $(contrib_TARGET) $(libedit_LIBS)
+kresc_DEPEND := $(libkres) $(contrib)
 $(eval $(call make_sbin,kresc,daemon,yes))
 client: $(kresc)
 client-install: kresc-install
