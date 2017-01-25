@@ -127,6 +127,7 @@ static unsigned char complete(EditLine *el, int ch)
 		
 		//Show possible globals.
 		char *lines = strtok(globals, "\n");
+		free(globals);
 		int matches = 0;
 		char *lastmatch;
 		while (lines) {
@@ -144,9 +145,6 @@ static unsigned char complete(EditLine *el, int ch)
 			el_insertstr(el, lastmatch);
 			pos = strlen(lastmatch);
 		}
-		
-		free(globals);
-		free(lines);
 		
 	//Current line (or part of it) is a name of some table.
 	} else if(dot || !strncmp(type, "table", 5)) {
@@ -181,6 +179,7 @@ static unsigned char complete(EditLine *el, int ch)
 			
 			//Split members by newline.
 			char *lines = strtok(members, "\n");
+			free(members);
 			int matches = 0;
 			char *lastmatch;
 			
