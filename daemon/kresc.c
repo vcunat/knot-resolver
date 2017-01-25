@@ -14,6 +14,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <assert.h>
+#include <contrib/ccan/asprintf/asprintf.h>
 #include <editline/readline.h>
 #include <histedit.h>
 #include <stdbool.h>
@@ -31,19 +32,50 @@
 
 FILE *g_tty = NULL; //!< connection to the daemon
 
-static char *run_cmd(const char *cmd, uint32_t *msg_len);
+static char *run_cmd(const char *cmd, size_t *msg_len);
 
-char * prompt(EditLine *e) {
+char * prompt(EditLine *e)
+{
   return PROGRAM_NAME"> ";
 }
 
 
 bool starts_with(const char *a, const char *b)
 {
-   if(strncmp(a, b, strlen(b)) == 0) return 1;
-   return 0;
+	if(strncmp(a, b, strlen(b)) == 0) return 1;
+	return 0;
 }
 
+//! Returns Lua name of type of value, NULL on error. Puts length of type in name_len;
+const char *get_type_name(const char *value)
+{
+	if(value == NULL) {
+		return NULL;
+	}
+	
+	char *cmd = afmt("type(%s)",value);
+	
+	if(!cmd) {
+		perror("While tab-completing.");
+		return NULL;
+	}
+	
+	size_t name_len;
+	char *type = run_cmd(cmd, &name_len);
+	if(!type) {
+		return NULL;
+	} else {
+		free(cmd);
+	}
+	
+	if(starts_with(type, "[")) {
+		//Return "nil" on non-valid name.
+		return "nil";
+	} else {
+		type[(strlen(type))-1] = '\0';
+		return type;
+	}
+}
 
 static unsigned char complete(EditLine *el, int ch)
 {
@@ -51,63 +83,143 @@ static unsigned char complete(EditLine *el, int ch)
 	const char **argv;
 	const LineInfo *li = el_line(el);
 	Tokenizer *tok = tok_init(NULL);
-	// Parse the line.
+	
+	//Tokenize current line.
 	int ret = tok_line(tok, li, &argc, &argv, &token, &pos);
-	
-	
-	uint32_t msg_len;
-	
-	char *help = run_cmd("help()", &msg_len);
-	if (!help) {
-		perror("While communication with daemon");
-		goto complete_exit;
-	}
 	
 	if (ret != 0) {
 		goto complete_exit;
 	}
 	
+	//Show help.
 	if(argc == 0) {
-		printf("\n%s", help);
+		size_t help_len;
+		char *help = run_cmd("help()", &help_len);
+		if(help) {
+			printf("\n%s", help);
+			free(help);
+		}
+		goto complete_exit;
 	}
 	
-	char * lines;
-	lines = strtok(help, "\n");
-	int matches = 0;
-	bool exactmatch = 0;
-	char *lastmatch;
-	int i = 0;
-	while (lines != NULL) {
-		if(!(i % 2))
-			if(argv[0] && starts_with(lines, argv[0]))
-			{
-				printf("\n%s",lines);
-				lastmatch = lines;
-				matches++;
-				if(!strcmp(lines, argv[0]))
-					exactmatch = 1;
-			}
-		lines = strtok (NULL, "\n");
-		i++;
+	if(argc > 1) {
+		goto complete_exit;
 	}
-	printf("\n");
-	if(matches == 1) {
-		char * brace = strchr(lastmatch, '(');
-		if(brace != NULL)
-			*(brace+1) = '\0';
-		el_deletestr(el, pos);
-		el_insertstr(el, lastmatch);
-		pos = strlen(lastmatch) ;
-		if(exactmatch && brace == NULL){
-			char *prettyprint = run_cmd(lastmatch, &msg_len);
-			printf("%s", prettyprint);
-			el_insertstr(el, ".");
-			free(prettyprint);
+	
+	//Get name of type of current line.
+	char *type = get_type_name(argv[0]);
+	
+	if(!type) {
+		goto complete_exit;
+	}
+	
+	//Get position of last dot in current line (useful for parsing table).
+	char *dot = strrchr(argv[0], '.');
+	
+	//Line is not a name of some table and there is no dot in it.
+	if(strncmp(type, "table", 5) && !dot) {
+		//Parse Lua globals.
+		size_t globals_len;
+		char *globals = run_cmd("_G.__orig_name_list", &globals_len);
+		if(!globals) {
+			goto complete_exit;
 		}
+		
+		//Show possible globals.
+		char *lines = strtok(globals, "\n");
+		int matches = 0;
+		char *lastmatch;
+		while (lines) {
+			if(argv[0] && starts_with(lines, argv[0])) {
+					printf("\n%s (%s)",lines,get_type_name(lines));
+					lastmatch = lines;
+					matches++;
+			}
+			lines = strtok (NULL, "\n");
+		}
+		
+		//Complete matching global.
+		if(matches == 1) {
+			el_deletestr(el, pos);
+			el_insertstr(el, lastmatch);
+			pos = strlen(lastmatch);
+		}
+		
+		free(globals);
+		free(lines);
+		
+	//Current line (or part of it) is a name of some table.
+	} else if(dot || !strncmp(type, "table", 5)) {
+		char *table = argv[0];
+		
+		//Get only the table name (without partial member name).
+		if(dot) {
+			*(table+(dot-argv[0])) = '\0';
+		}
+		
+		//Insert a dot after the table name.
+		if(!strncmp(type, "table", 5)) {
+			el_insertstr(el, ".");
+			pos++;
+		}
+		
+		//Check if the substring before dot is a valid table name.
+		char* t_type = get_type_name(table);
+		if(t_type && !strncmp("table",t_type,5)) {
+			//Get string of members of the table.
+			char *cmd = afmt("do local s=\"\"; for i in pairs(%s) do s=s..i..\"\\n\" end return(s) end", table);
+			if(!cmd) {
+				perror("While tab-completing.");
+				goto complete_exit;
+			}
+			size_t members_len;
+			char *members = run_cmd(cmd, &members_len);
+			free(cmd);
+			if(!members) {
+				perror("While communication with daemon");
+			}
+			
+			//Split members by newline.
+			char *lines = strtok(members, "\n");
+			int matches = 0;
+			char *lastmatch;
+			
+			if(!dot) {
+				//Prints all members.
+				while (lines) {
+					printf("\n%s.%s (%s)",table,lines,get_type_name(afmt("%s.%s",table,lines)));
+					lines = strtok (NULL, "\n");
+				}
+			} else {
+				//Print members matching the current line.
+				while (lines) {
+					if(argv[0] && starts_with(lines, dot+1)) {
+							printf("\n%s.%s (%s)",table,lines,get_type_name(afmt("%s.%s",table,lines)));
+							lastmatch = lines;
+							matches++;
+					}
+					lines = strtok (NULL, "\n");
+				}
+				
+				//Complete matching member.
+				if(matches == 1) {
+					el_deletestr(el, pos);
+					el_insertstr(el, table);
+					el_insertstr(el, ".");
+					el_insertstr(el, lastmatch);
+					pos = strlen(lastmatch) + strlen(table) + 1;
+				}
+			}
+		}
+	} else if(!strncmp(type, "function", 8))
+	{
+		//Add left parenthesis to function name. 
+		el_insertstr(el, "(");
+		pos++;
 	}
+	free(type);
 
 complete_exit:
-	free(help);
 	tok_reset(tok);
 	tok_end(tok);
 	return CC_REDISPLAY;
@@ -149,15 +261,13 @@ static int init_tty(const char *path)
 	return 0;
 }
 
-//! Run a command on the daemon; return the answer or NULL on failure.
-static char *run_cmd(const char *cmd, uint32_t *msg_len)
+//! Run a command on the daemon; return the answer or NULL on failure, puts answer length to out_len.
+static char *run_cmd(const char *cmd, size_t *out_len)
 {
 	if (!g_tty || !cmd) {
 		assert(false);
 		return NULL;
 	}
-	printf("cmd: %s\n", cmd);
-
 	if (fprintf(g_tty, "%s", cmd) < 0 || fflush(g_tty))
 		return NULL;
 	uint32_t len;
@@ -171,13 +281,12 @@ static char *run_cmd(const char *cmd, uint32_t *msg_len)
 		return NULL;
 	}
 	msg[len] = '\0';
-	*msg_len = len;
+	*out_len = len;
 	return msg;
 }
 
 static int interact()
 {
-
 	EditLine *el;
 	History *hist;
 	int count;
@@ -185,10 +294,9 @@ static int interact()
 	int keepreading = 1;
 	HistEvent ev;
 	el = el_init(PROGRAM_NAME, stdin, stdout, stderr);
-	el_set(el, EL_PROMPT, &prompt);
+	el_set(el, EL_PROMPT, prompt);
 	el_set(el, EL_EDITOR, "emacs");
-	el_set(el, EL_ADDFN, PROGRAM_NAME"-complete",
-	       "Perform "PROGRAM_NAME" completion.", complete);
+	el_set(el, EL_ADDFN, PROGRAM_NAME"-complete", "Perform "PROGRAM_NAME" completion.", complete);
 	el_set(el, EL_BIND, "^I",  PROGRAM_NAME"-complete", NULL);
 
 	hist = history_init();
@@ -198,17 +306,15 @@ static int interact()
 	}
 	history(hist, &ev, H_SETSIZE, 800);
 	el_set(el, EL_HIST, history, hist);
-
-
+	
 	const char hist_file[] = HISTORY_FILE;
 	history(hist, &ev, H_LOAD, hist_file);
-
-
+	
 	while (keepreading) {
 		line = el_gets(el, &count);
 			if (count > 0) {
 			history(hist, &ev, H_ENTER, line);
-			uint32_t msg_len;
+			size_t msg_len;
 			char *msg = run_cmd(line, &msg_len);
 			if (!msg) {
 				perror("While communication with daemon");
@@ -221,9 +327,7 @@ static int interact()
 			if (msg_len == 0 || msg[msg_len-1] != '\n') {
 				printf("\n");
 			}
-			printf("%d\n", msg_len);
 			history(hist, &ev, H_SAVE, hist_file);
-
 			free(msg);
 		}
 	}
