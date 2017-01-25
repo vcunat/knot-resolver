@@ -88,6 +88,7 @@ static unsigned char complete(EditLine *el, int ch)
 	int ret = tok_line(tok, li, &argc, &argv, &token, &pos);
 	
 	if (ret != 0) {
+		perror("While tab-completing.");
 		goto complete_exit;
 	}
 	
@@ -98,6 +99,8 @@ static unsigned char complete(EditLine *el, int ch)
 		if(help) {
 			printf("\n%s", help);
 			free(help);
+		} else {
+			perror("While communication with daemon");
 		}
 		goto complete_exit;
 	}
@@ -122,6 +125,7 @@ static unsigned char complete(EditLine *el, int ch)
 		size_t globals_len;
 		char *globals = run_cmd("_G.__orig_name_list", &globals_len);
 		if(!globals) {
+			perror("While tab-completing");
 			goto complete_exit;
 		}
 		//Show possible globals.
@@ -154,7 +158,7 @@ static unsigned char complete(EditLine *el, int ch)
 	} else if(dot || !strncmp(type, "table", 5)) {
 		char *table = strdup(argv[0]);
 		if(!table) {
-			perror("While while tab-completing");
+			perror("While tab-completing");
 			goto complete_exit;
 		}
 		
