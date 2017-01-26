@@ -16,6 +16,7 @@
 #include <assert.h>
 #include <contrib/ccan/asprintf/asprintf.h>
 #include <editline/readline.h>
+#include <errno.h>
 #include <histedit.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -23,11 +24,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 
 
-#define HISTORY_FILE ".kresc_history"
+#define HISTORY_FILE "kresc_history"
 #define PROGRAM_NAME "kresc"
 
 FILE *g_tty = NULL; //!< connection to the daemon
@@ -323,8 +325,41 @@ static int interact()
 	history(hist, &ev, H_SETSIZE, 800);
 	el_set(el, EL_HIST, history, hist);
 	
-	const char hist_file[] = HISTORY_FILE;
-	history(hist, &ev, H_LOAD, hist_file);
+	char *hist_file;
+	
+	char *data_home = getenv("XDG_DATA_HOME");
+	
+	//Check whether $XDG_DATA_HOME is set.
+	if(!data_home || *data_home == '\0') {
+		const char *home = getenv("HOME"); //This should be set on any POSIX compliant OS, even for nobody
+		
+		//Create necessary folder.
+		char *dirs[3] = {afmt("%s/.local", home), afmt("%s/.local/share", home), afmt("%s/.local/share/kresd/", home)};
+		bool ok = true;
+		for (int i = 0; i < 3; i++) {
+			if (mkdir(dirs[i], 0755) && errno != EEXIST) {
+				ok = false;
+				break;
+			}
+		}
+		if(ok) {
+			hist_file = afmt("%s/.local/share/kresd/"HISTORY_FILE, home);
+		}
+	} else {
+		if (!mkdir(afmt("%s/kresd/", data_home), 0755) || errno == EEXIST) {
+			hist_file = afmt("%s/kresd/"HISTORY_FILE, data_home);
+		} else {
+			perror("While opening history dir, trying working dir instead");
+			hist_file = HISTORY_FILE;
+		}
+	}
+	
+	//Load history file
+	if(hist_file) {
+		history(hist, &ev, H_LOAD, hist_file);
+	} else {
+		perror("While opening history file");
+	}
 	
 	while (keepreading) {
 		line = el_gets(el, &count);
@@ -348,6 +383,7 @@ static int interact()
 		}
 	}
 	history_end(hist);
+	free(hist_file);
 	el_end(el);
 	if (feof(stdin))
 		return 0;
