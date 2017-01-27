@@ -150,12 +150,16 @@ ffi.metatype( knot_rrset_t, {
 			assert(ffi.istype(knot_rrset_t, rr))
 			if rr.rrs.rr_count > 0 then
 				local ret
+				local buf
 				if i ~= nil then
 					ret = knot.knot_rrset_txt_dump_data(rr, i, rrset_buf, rrset_buflen, knot.KNOT_DUMP_STYLE_DEFAULT)
+					buf = rrset_buf
 				else
-					ret = knot.knot_rrset_txt_dump(rr, rrset_buf, rrset_buflen, knot.KNOT_DUMP_STYLE_DEFAULT)
+					buf = ffi.gc(ffi.C.new('char *'), ffi.C.free)
+					len = ffi.C.new('int')
+					ret = knot.knot_rrset_txt_dump(rr, buf, len, knot.KNOT_DUMP_STYLE_DEFAULT)
 				end
-				return ret >= 0 and ffi.string(rrset_buf)
+				return ret >= 0 and ffi.string(buf)
 			end
 		end,
 	}
