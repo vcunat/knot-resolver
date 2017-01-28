@@ -139,10 +139,14 @@ static unsigned char complete(EditLine * el, int ch)
 			if (argv[0] && starts_with(token, argv[0])) {
 				printf("\n%s (%s)", token,
 				       get_type_name(token));
+				fflush(stdout);
 				lastmatch = token;
 				matches++;
 			}
 			token = strtok(NULL, "\n");
+		}
+		if (matches) {
+			printf("\n");
 		}
 
 		//Complete matching global.
