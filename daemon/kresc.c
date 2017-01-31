@@ -335,7 +335,7 @@ static int interact()
 	history(hist, &ev, H_SETSIZE, 800);
 	el_set(el, EL_HIST, history, hist);
 
-	char *hist_file;
+	char *hist_file = NULL;
 
 	char *data_home = getenv("XDG_DATA_HOME");
 
@@ -362,10 +362,6 @@ static int interact()
 		if (!mkdir(afmt("%s/kresd/", data_home), 0755)
 		    || errno == EEXIST) {
 			hist_file = afmt("%s/kresd/" HISTORY_FILE, data_home);
-		} else {
-			perror
-			    ("While opening history dir, trying working dir instead");
-			hist_file = HISTORY_FILE;
 		}
 	}
 
@@ -393,7 +389,9 @@ static int interact()
 			if (msg_len == 0 || msg[msg_len - 1] != '\n') {
 				printf("\n");
 			}
-			history(hist, &ev, H_SAVE, hist_file);
+			if(hist_file) {
+				history(hist, &ev, H_SAVE, hist_file);
+			}
 			free(msg);
 		}
 	}
