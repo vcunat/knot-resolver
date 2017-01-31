@@ -146,7 +146,7 @@ static unsigned char complete(EditLine * el, int ch)
 			}
 			token = strtok(NULL, "\n");
 		}
-		if (matches) {
+		if (matches > 1) {
 			printf("\n");
 		}
 
@@ -238,6 +238,9 @@ static unsigned char complete(EditLine * el, int ch)
 					    strlen(lastmatch) + strlen(table) +
 					    1;
 				}
+			}
+			if (matches > 1) {
+				printf("\n");
 			}
 			free(members_tok);
 		}
