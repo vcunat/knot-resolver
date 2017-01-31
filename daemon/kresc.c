@@ -319,7 +319,6 @@ static int interact()
 	History *hist;
 	int count;
 	const char *line;
-	int keepreading = 1;
 	HistEvent ev;
 	el = el_init(PROGRAM_NAME, stdin, stdout, stderr);
 	el_set(el, EL_PROMPT, prompt);
@@ -377,7 +376,7 @@ static int interact()
 		perror("While opening history file");
 	}
 
-	while (keepreading) {
+	while (1) {
 		line = el_gets(el, &count);
 		if (count > 0) {
 			history(hist, &ev, H_ENTER, line);
