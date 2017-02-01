@@ -83,7 +83,7 @@ static int probe_geodb(kr_layer_t *ctx, const struct sockaddr *ecs_addr, data_t 
 		goto err_not_found;
 	data->loc.loc_len = entry.data_size;
 	memcpy(data->loc.loc, entry.utf8_string, data->loc.loc_len);
-	MSG(debug, "geo DB located query in: %c%c\n", data->loc.loc[0], data->loc.loc[1]);
+	MSG(debug, "geo DB location in: %c%c\n", data->loc.loc[0], data->loc.loc[1]);
 	data->query_ecs.scope_len = lookup_result.netmask;
 	return kr_ok();
 
@@ -141,7 +141,8 @@ static int begin(kr_layer_t *ctx)
 			goto go_without_ecs;
 		}
 		ecs_addr = (struct sockaddr *)&ecs_addr_storage;
-		MSG(debug, "explicit ECS record is OK\n");
+		MSG(debug, "explicit ECS record is OK, source_len=%d\n",
+				(int)data->query_ecs.source_len);
 	} else {
 		if (req->qsource.opt)
 			MSG(debug, "no OPT records found\n");
@@ -152,13 +153,39 @@ static int begin(kr_layer_t *ctx)
 		 * for privacy as we only use the location code inferred from it. */
 		ecs_addr = req->qsource.addr;
 	}
+	if (!ecs_addr) {
+		assert(false);
+		return ctx->state;
+	}
 
-	/* Prepare data->query_ecs for answer and queries, as necessary. */
+	/* Privacy https://tools.ietf.org/html/rfc7871#section-11.1 */
+	int scope_max;
+	switch (ecs_addr->sa_family) {
+	case AF_INET:
+		scope_max = 24; break;
+	case AF_INET6:
+		scope_max = 56; break;
+	default:
+		assert(false);
+		scope_max = 0;
+	}
+
+	/* If requested, prepare ECS section into the answer; as we know it already. */
+	if (is_explicit) {
+		/* It's disputable how long scope to answer, as our partitioning
+		 * of locations is just different than what the RFC assumes.
+		 * TODO: perhaps refuse short source_len except for /0 ? */
+		data->query_ecs.scope_len = is_public ? 0 : scope_max;
+		if (add_ecs_opt(&data->query_ecs, req->answer)) {
+			MSG(error, "failed to prepare ECS into the answer\n");
+			goto go_without_ecs;
+		}
+		MSG(debug, "prepared ECS into the answer\n");
+	}
+
+	/* Prepare data->loc, and data->query_ecs for queries, as necessary. */
 	if (is_public) {
-		/* Answer with scope /0 if ECS was requested. */
-		if (is_explicit)
-			data->query_ecs.scope_len = 0;
-
+		/* All OK */
 	} else if (is_explicit && data->query_ecs.source_len == 0) {
 		/* Explicit /0 special case. */
 		data->loc.loc_len = 1;
@@ -170,39 +197,20 @@ static int begin(kr_layer_t *ctx)
 		if (probe_geodb(ctx, ecs_addr, data) != kr_ok())
 			goto go_without_ecs;
 			// TODO: we SHOULD return REFUSED instead if data->is_explicit (and not /0)
-
-		int max_prefix; // privacy https://tools.ietf.org/html/rfc7871#section-11.1
-		switch (ecs_addr->sa_family) {
-		case AF_INET:
-			max_prefix = 24; break;
-		case AF_INET6:
-			max_prefix = 56; break;
-		default:
-			assert(false);
-			max_prefix = 0;
-		}
-		data->query_ecs.scope_len = MIN(max_prefix, data->query_ecs.scope_len);
-		if (is_explicit) {
-			knot_edns_client_subnet_set_addr(&data->query_ecs,
-							 (struct sockaddr_storage *)ecs_addr);
-				/* ^ not very efficient way but should be OK */
-			data->query_ecs.source_len = data->query_ecs.scope_len;
-		}
+		/* Use address+length from the geoDB instead of real one. */
+		int qry_scope = MIN(scope_max, data->query_ecs.scope_len);
+		knot_edns_client_subnet_set_addr(&data->query_ecs,
+						 (struct sockaddr_storage *)ecs_addr);
+		data->query_ecs.source_len = qry_scope;
 	}
 	
-	// FIXME
-	if (is_explicit) {
-		/* Prepare the ECS section into the answer, as we know it already. */
-		if (add_ecs_opt(&data->query_ecs, req->answer)) {
-			MSG(error, "failed to prepare ECS into the answer\n");
-			goto go_without_ecs;
-		}
-		MSG(debug, "prepared ECS into the answer\n");
-	}
-
 	if (!is_public) {
 		/* All cases where we want to use ECS will get here. */
-		data->query_ecs.scope_len = 0; /* Ready for out-going queries. */
+		
+		/* Prepare for out-going queries. */
+		data->query_ecs.source_len = data->query_ecs.scope_len;
+		data->query_ecs.scope_len = 0;
+
 		//data->is_explicit = is_explicit;
 		req->ecs = data;
 		qry->ecs = &data->loc; /* for initial cache search */
@@ -271,6 +279,9 @@ static int consume(kr_layer_t *ctx, knot_pkt_t *pkt)
 		assert(false);
 		return ctx->state;
 	}
+	if (!pkt || knot_wire_get_qr(pkt->wire) == 0 /*our own query*/)
+		return ctx->state;
+
 	struct kr_query *qry = req->current_query;
 	//MSG(debug, "pending: %d\n", (int)req->rplan.pending.len);
 	
