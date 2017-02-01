@@ -94,7 +94,7 @@ int kr_cache_open(struct kr_cache *cache, const struct kr_cdb_api *api, struct k
 		return ret;
 	}
 	memset(&cache->stats, 0, sizeof(cache->stats));
-	cache->ttl_min = 0;
+	cache->ttl_min = KR_CACHE_DEFAULT_MINTTL;
 	cache->ttl_max = KR_CACHE_DEFAULT_MAXTTL;
 	/* Check cache ABI version */
 	(void) assert_right_version(cache);
