@@ -47,6 +47,7 @@ static const struct hint_info SBELT[] = {
 		HINT_LEN_##type, \
 		U8(HINT_##name##_##type), \
       	}
+/*
 	HINT(j, A),
 	HINT(k, A),
 	HINT(d, A),
@@ -57,12 +58,14 @@ static const struct hint_info SBELT[] = {
 	HINT(i, A),
 	HINT(l, A),
 	HINT(m, A),
-	HINT(b, A),
-	HINT(c, A),
+*/
+//	HINT(b, A),
+//	HINT(c, A),
 	HINT(a, A),
 	HINT(a, AAAA),
-	HINT(b, AAAA),
-	HINT(c, AAAA),
+//	HINT(b, AAAA),
+//	HINT(c, AAAA),
+/*
 	HINT(d, AAAA),
 	HINT(e, AAAA),
 	HINT(f, AAAA),
@@ -73,6 +76,7 @@ static const struct hint_info SBELT[] = {
 	HINT(k, AAAA),
 	HINT(l, AAAA),
 	HINT(m, AAAA),
+*/
 	#undef HINT
 };
 #undef HINT_LEN_A

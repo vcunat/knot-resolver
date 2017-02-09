@@ -11,7 +11,7 @@ local function https_fetch(url, ca)
 	local r, c, h, s = https.request{
 	       url = url,
 	       cafile = ca,
-	       verify = {'peer', 'fail_if_no_peer_cert' },
+	       --verify = {'peer', 'fail_if_no_peer_cert' },
 	       protocol = 'tlsv1_2',
 	       sink = ltn12.sink.table(resp),
 	}
@@ -214,7 +214,7 @@ active_refresh = function (keyset, pkt, is_initial)
 	for i, rr in ipairs(keyset) do -- 10 or 50% of the original TTL
 		min_ttl = math.min(min_ttl, (retry and 100 or 500) * rr.ttl)
 	end
-	return math.max(hour, min_ttl)
+	return math.min(15*sec, min_ttl)
 end
 
 -- Write keyset to a file.  States and timers are stored in comments.
@@ -439,11 +439,11 @@ trust_anchors = {
 
 	-- Documented properties:
 	insecure = {},
-	hold_down_time = 30 * day,
+	hold_down_time = 175*sec,
 	refresh_time = nil,
 	keep_removed = 0,
 
-	bootstrap_url = 'https://data.iana.org/root-anchors/root-anchors.xml',
+	bootstrap_url = 'https://www.toot-servers.net/root7/root-anchors/root-anchors.xml',
 	bootstrap_ca = '@ETCDIR@/icann-ca.pem',
 
 	-- Load keys from a file, 5011-managed by default.
