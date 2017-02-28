@@ -34,7 +34,7 @@
 #include "lib/utils.h"
 
 /* Cache version */
-#define KEY_VERSION "V\x03"
+#define KEY_VERSION "V\x04"
 /* Key size */
 #define KEY_HSIZE (sizeof(uint8_t) + sizeof(uint16_t))
 #define KEY_SIZE (KEY_HSIZE + KNOT_DNAME_MAXLEN)
@@ -116,22 +116,32 @@ void kr_cache_sync(struct kr_cache *cache)
 	}
 }
 
+
+/** like knot_dname_size but assuming it's uncompressed. */
+static int kr_dname_size(const knot_dname_t *name)
+{
+	assert(name);
+	/* Count name size without terminal label. */
+	int len = 0;
+	while (*name != '\0') {
+		uint8_t lblen = *name + 1;
+		len += lblen;
+		name += lblen;
+	}
+	return len + 1;
+}
+
 /**
- * @internal Composed key as { u8 tag, u8[1-255] name, u16 type }
- * The name is lowercased and label order is reverted for easy prefix search.
- * e.g. '\x03nic\x02cz\x00' is saved as '\0x00cz\x00nic\x00'
+ * @internal Composed key as { u8[1-255] name, u16 type, u8 tag }
+ * We assume the name is already lowercased at this point.
  */
 static size_t cache_key(uint8_t *buf, uint8_t tag, const knot_dname_t *name, uint16_t rrtype)
 {
-	/* Convert to lookup format */
-	int ret = knot_dname_lf(buf, name, NULL);
-	if (ret != 0) {
-		return 0;
-	}
-	/* Write tag + type */
-	uint8_t name_len = buf[0];
-	buf[0] = tag;
-	memcpy(buf + sizeof(uint8_t) + name_len, &rrtype, sizeof(uint16_t));
+	uint8_t name_len = kr_dname_size(name);
+	/* Write tag + name + type */
+	memcpy(buf, name, name_len);
+	memcpy(buf + name_len, &rrtype, sizeof(uint16_t));
+	buf[name_len + sizeof(uint16_t)] = tag;
 	return name_len + KEY_HSIZE;
 }
 
