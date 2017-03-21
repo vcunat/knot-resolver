@@ -443,7 +443,8 @@ trust_anchors = {
 	refresh_time = nil,
 	keep_removed = 0,
 
-	bootstrap_url = 'https://www.toot-servers.net/root7/root-anchors/root-anchors.xml',
+	--bootstrap_url = 'https://www.toot-servers.net/root7/root-anchors/root-anchors.xml',
+	bootstrap_url = 'https://icksk.dnssek.info/root-anchors/root-anchors.xml',
 	bootstrap_ca = '@ETCDIR@/icann-ca.pem',
 
 	-- Load keys from a file, 5011-managed by default.

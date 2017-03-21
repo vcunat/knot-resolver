@@ -12,8 +12,8 @@ for atype in A AAAA; do
 		exit 1
 	fi
 
-	for n in a b c; do
-		ip="$(kdig "$atype" "$n.toot-servers.net." +dnssec +short)"
+	for n in a; do
+		ip="$(kdig "$atype" "$n.moot-servers.net." +dnssec +short)"
 		ip_hex="$("$(dirname "$0")"/inet_pton.py "$ip")"
 		[ "$(printf "%s" "$ip_hex" | wc -c)" = "$alen" ] || exit 1
 		echo "#define HINT_${n}_${atype} \"$ip_hex\""
