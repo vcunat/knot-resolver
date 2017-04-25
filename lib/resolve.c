@@ -372,17 +372,22 @@ static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 
 static int edns_put(knot_pkt_t *pkt)
 {
+	kr_log_verbose("putting OPT...\n");
 	if (!pkt->opt_rr) {
+		kr_log_verbose("               missing opt_rr\n");
 		return kr_ok();
 	}
 	/* Reclaim reserved size. */
 	int ret = knot_pkt_reclaim(pkt, knot_edns_wire_size(pkt->opt_rr));
 	if (ret != 0) {
+		kr_log_verbose("               failed to reclaim, errcode=%d\n", ret);
 		return ret;
 	}
 	/* Write to packet. */
 	assert(pkt->current == KNOT_ADDITIONAL);
-	return knot_pkt_put(pkt, KNOT_COMPR_HINT_NONE, pkt->opt_rr, KNOT_PF_FREE);
+	int err = knot_pkt_put(pkt, KNOT_COMPR_HINT_NONE, pkt->opt_rr, KNOT_PF_FREE);
+	kr_log_verbose("               done, errcode=%d\n", err);
+	return err;
 }
 
 /** Removes last EDNS OPT RR written to the packet. */
