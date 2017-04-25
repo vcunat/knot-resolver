@@ -18,7 +18,7 @@
  *
  * This builtin module caches whole packets from/for negative answers.
  *
- * Note: it also persists some QUERY_DNSSEC_* flags.
+ * Note: it also persists some DNSSEC_* flags.
  * The ranks are stored in *(uint8_t *)rrset->additional (all are the same for one packet).
  */
 
@@ -155,7 +155,8 @@ static int pktcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 	uint8_t flags = 0;
 	int ret = loot_pktcache(req->ctx, pkt, req, &flags);
 	if (ret == 0) {
-		qry->flags |= QUERY_CACHED|QUERY_NO_MINIMIZE;
+		qry->flags.CACHED = true;
+		qry->flags.NO_MINIMIZE = true;
 		if (flags & KR_CACHE_FLAG_WCARD_PROOF) {
 			qry->flags.DNSSEC_WEXPAND = true;
 		}

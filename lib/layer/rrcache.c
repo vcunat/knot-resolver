@@ -20,7 +20,7 @@
  *
  * Produce phase: if an RRset answering the query exists, the packet is filled
  * by it, including the corresponding RRSIGs (subject to some conditions).
- * Such a packet is recognizable: pkt->size == PKT_SIZE_NOWIRE, and QUERY_CACHED
+ * Such a packet is recognizable: pkt->size == PKT_SIZE_NOWIRE, and flags.CACHED
  * is set in the query.  The ranks are stored in *(uint8_t *)rrset->additional.
  *
  * TODO
@@ -153,7 +153,7 @@ static int loot_rrcache(struct kr_context *ctx, knot_pkt_t *pkt,
 	/* ^ TODO: performance? */
 
 	/* Lookup direct match first; only consider authoritative records.
-	 * TODO: move rank handling into the iterator (QUERY_DNSSEC_* flags)? */
+	 * TODO: move rank handling into the iterator (DNSSEC_* flags)? */
 	uint8_t rank  = 0;
 	uint8_t flags = 0;
 	uint8_t lowest_rank = (ta_covers ? KR_RANK_INSECURE : KR_RANK_INITIAL)
@@ -242,7 +242,8 @@ static int rrcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	if (ret == 0) {
 		VERBOSE_MSG(qry, "=> satisfied from cache\n");
-		qry->flags |= QUERY_CACHED|QUERY_NO_MINIMIZE;
+		qry->flags.CACHED = true;
+		qry->flags.NO_MINIMIZE = true;
 		pkt->parsed = pkt->size = PKT_SIZE_NOWIRE;
 		knot_wire_set_qr(pkt->wire);
 		knot_wire_set_aa(pkt->wire);

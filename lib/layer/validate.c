@@ -277,8 +277,7 @@ static void mark_insecure_parents(const struct kr_query *qry)
 	 * NS can be located at unsigned zone, but still will return
 	 * valid DNSSEC records for initial query. */
 	struct kr_query *parent = qry->parent;
-	const uint32_t cut_flags = (QUERY_AWAIT_IPV4 | QUERY_AWAIT_IPV6);
-	while (parent && ((parent->flags & cut_flags) == 0)) {
+	while (parent && !parent->flags.AWAIT_IPV4 && !parent->flags.AWAIT_IPV6) {
 		parent->flags.DNSSEC_WANT = false;
 		parent->flags.DNSSEC_INSECURE = true;
 		if (parent->stype != KNOT_RRTYPE_DS &&
@@ -303,7 +302,7 @@ static int update_parent_keys(struct kr_query *qry, uint16_t answer_type)
 		break;
 	case KNOT_RRTYPE_DS:
 		VERBOSE_MSG(qry, "<= parent: updating DS\n");
-		if (qry->flags & (QUERY_DNSSEC_NODS | QUERY_DNSSEC_INSECURE)) { /* DS non-existence proven. */
+		if (qry->flags.DNSSEC_NODS || qry->flags.DNSSEC_INSECURE) { /* DS non-existence proven. */
 			mark_insecure_parents(qry);
 		} else { /* DS existence proven. */
 			parent->zone_cut.trust_anchor = knot_rrset_copy(qry->zone_cut.trust_anchor, parent->zone_cut.pool);
@@ -621,8 +620,7 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 		return ctx->state;
 	}
 	if (!(qry->flags.DNSSEC_WANT)) {
-		const uint32_t test_flags = (QUERY_CACHED | QUERY_DNSSEC_INSECURE);
-		const bool is_insec = ((qry->flags & test_flags) == test_flags);
+		const bool is_insec = qry->flags.CACHED && qry->flags.DNSSEC_INSECURE;
 		if ((qry->flags.DNSSEC_INSECURE)) {
 			rank_records(ctx, KR_RANK_INSECURE);
 		}
@@ -794,7 +792,7 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 		return KR_STATE_FAIL;
 	} else if (pkt_rcode == KNOT_RCODE_NOERROR &&
 		   referral &&
-		   (((qry->flags & (QUERY_DNSSEC_WANT | QUERY_DNSSEC_INSECURE)) == QUERY_DNSSEC_INSECURE) ||
+		   ((!qry->flags.DNSSEC_WANT && qry->flags.DNSSEC_INSECURE) ||
 		   (qry->flags.DNSSEC_NODS))) {
 		/* referral with proven DS non-existance */
 		qtype = KNOT_RRTYPE_DS;
