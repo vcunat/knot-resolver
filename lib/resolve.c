@@ -164,7 +164,7 @@ static int invalidate_ns(struct kr_rplan *rplan, struct kr_query *qry)
  */
 static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct kr_cache *cache, uint32_t timestamp)
 {
-	if (qry->flags & QUERY_NO_MINIMIZE) {
+	if (qry->flags.NO_MINIMIZE) {
 		return;
 	}
 
@@ -185,7 +185,7 @@ static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct k
 		int ret = kr_cache_peek(cache, KR_CACHE_PKT, target, KNOT_RRTYPE_NS, &entry, &timestamp);
 		if (ret == 0) { /* Either NXDOMAIN or NODATA, start here. */
 			/* @todo We could stop resolution here for NXDOMAIN, but we can't because of broken CDNs */
-			qry->flags |= QUERY_NO_MINIMIZE;
+			qry->flags.NO_MINIMIZE = true;
 			kr_make_query(qry, pkt);
 			return;
 		}
@@ -210,12 +210,12 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 	if (is_insecured) {
 		/* If parent is unsecured we don't want DNSSEC
 		 * even if cut name is covered by TA. */
-		qry->flags &= ~QUERY_DNSSEC_WANT;
-		qry->flags |= QUERY_DNSSEC_INSECURE;
+		qry->flags.DNSSEC_WANT = false;
+		qry->flags.DNSSEC_INSECURE = true;
 	} else if (kr_ta_covers_qry(req->ctx, qry->zone_cut.name, KNOT_RRTYPE_NS)) {
-		qry->flags |= QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_WANT = true;
 	} else {
-		qry->flags &= ~QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_WANT = false;
 	}
 
 	struct kr_zonecut cut_found = {0};
@@ -234,7 +234,7 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 			return KR_STATE_FAIL;
 		}
 		VERBOSE_MSG(qry, "=> using root hints\n");
-		qry->flags &= ~QUERY_AWAIT_CUT;
+		qry->flags.AWAIT_CUT = false;
 		kr_zonecut_deinit(&cut_found);
 		return KR_STATE_DONE;
 	} else if (ret != kr_ok()) {
@@ -244,21 +244,21 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 
 	/* Find out security status.
 	 * Go insecure if the zone cut is provably insecure */
-	if ((qry->flags & QUERY_DNSSEC_WANT) && !secured) {
+	if ((qry->flags.DNSSEC_WANT) && !secured) {
 		VERBOSE_MSG(qry, "=> NS is provably without DS, going insecure\n");
-		qry->flags &= ~QUERY_DNSSEC_WANT;
-		qry->flags |= QUERY_DNSSEC_INSECURE;
+		qry->flags.DNSSEC_WANT = false;
+		qry->flags.DNSSEC_INSECURE = true;
 	}
 	/* Zonecut name can change, check it again
 	 * to prevent unnecessary DS & DNSKEY queries */
-	if (!(qry->flags & QUERY_DNSSEC_INSECURE) &&
+	if (!(qry->flags.DNSSEC_INSECURE) &&
 	    kr_ta_covers_qry(req->ctx, cut_found.name, KNOT_RRTYPE_NS)) {
-		qry->flags |= QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_WANT = true;
 	} else {
-		qry->flags &= ~QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_WANT = false;
 	}
 	/* Check if any DNSKEY found for cached cut */
-	if ((qry->flags & QUERY_DNSSEC_WANT) &&
+	if ((qry->flags.DNSSEC_WANT) &&
 	    (cut_found.key == NULL)) {
 		/* No DNSKEY was found for cached cut.
 		 * If no glue were fetched for this cut,
@@ -276,7 +276,7 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 			return KR_STATE_FAIL;
 		}
 		VERBOSE_MSG(qry, "=> using root hints\n");
-		qry->flags &= ~QUERY_AWAIT_CUT;
+		qry->flags.AWAIT_CUT = false;
 		return KR_STATE_DONE;
 	}
 	/* Copy fetched name */
@@ -304,14 +304,14 @@ static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 	 * Prefer IPv6 and continue with IPv4 if not available.
 	 */
 	uint16_t next_type = 0;
-	if (!(qry->flags & QUERY_AWAIT_IPV6) &&
-	    !(ctx->options & QUERY_NO_IPV6)) {
+	if (!(qry->flags.AWAIT_IPV6) &&
+	    !(ctx->options.NO_IPV6)) {
 		next_type = KNOT_RRTYPE_AAAA;
-		qry->flags |= QUERY_AWAIT_IPV6;
-	} else if (!(qry->flags & QUERY_AWAIT_IPV4) &&
-		   !(ctx->options & QUERY_NO_IPV4)) {
+		qry->flags.AWAIT_IPV6 = true;
+	} else if (!(qry->flags.AWAIT_IPV4) &&
+		   !(ctx->options.NO_IPV4)) {
 		next_type = KNOT_RRTYPE_A;
-		qry->flags |= QUERY_AWAIT_IPV4;
+		qry->flags.AWAIT_IPV4 = true;
 		/* Hmm, no useable IPv6 then. */
 		qry->ns.reputation |= KR_NS_NOIP6;
 		kr_nsrep_update_rep(&qry->ns, qry->ns.reputation, ctx->cache_rep);
@@ -322,7 +322,7 @@ static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 		if (!next_type && qry->zone_cut.name[0] == '\0') {
 			VERBOSE_MSG(qry, "=> fallback to root hints\n");
 			kr_zonecut_set_sbelt(ctx, &qry->zone_cut);
-			qry->flags |= QUERY_NO_THROTTLE; /* Pick even bad SBELT servers */
+			qry->flags.NO_THROTTLE = true; /* Pick even bad SBELT servers */
 			return kr_error(EAGAIN);
 		}
 		/* No IPv4 nor IPv6, flag server as unuseable. */
@@ -335,10 +335,10 @@ static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 	struct kr_query *next = qry;
 	if (knot_dname_is_equal(qry->ns.name, qry->sname) &&
 	    qry->stype == next_type) {
-		if (!(qry->flags & QUERY_NO_MINIMIZE)) {
-			qry->flags |= QUERY_NO_MINIMIZE;
-			qry->flags &= ~QUERY_AWAIT_IPV6;
-			qry->flags &= ~QUERY_AWAIT_IPV4;
+		if (!(qry->flags.NO_MINIMIZE)) {
+			qry->flags.NO_MINIMIZE = true;
+			qry->flags.AWAIT_IPV6 = false;
+			qry->flags.AWAIT_IPV4 = false;
 			VERBOSE_MSG(qry, "=> circular dependepcy, retrying with non-minimized name\n");
 		} else {
 			qry->ns.reputation |= KR_NS_NOIP4 | KR_NS_NOIP6;
@@ -353,7 +353,7 @@ static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 		if (!next) {
 			return kr_error(ENOMEM);
 		}
-		next->flags |= QUERY_NONAUTH;
+		next->flags.NONAUTH = true;
 	}
 	/* At the root level with no NS addresses, add SBELT subrequest. */
 	int ret = 0;
@@ -362,10 +362,10 @@ static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 		if (ret == 0) { /* Copy TA and key since it's the same cut to avoid lookup. */
 			kr_zonecut_copy_trust(&next->zone_cut, &qry->zone_cut);
 			kr_zonecut_set_sbelt(ctx, &qry->zone_cut); /* Add SBELT to parent in case query fails. */
-			qry->flags |= QUERY_NO_THROTTLE; /* Pick even bad SBELT servers */
+			qry->flags.NO_THROTTLE = true; /* Pick even bad SBELT servers */
 		}
 	} else {
-		next->flags |= QUERY_AWAIT_CUT;
+		next->flags.AWAIT_CUT = true;
 	}
 	return ret;
 }
@@ -558,7 +558,7 @@ static int answer_finalize(struct kr_request *request, int state)
 	/* Always set SERVFAIL for bogus answers. */
 	if (state == KR_STATE_FAIL && rplan->pending.len > 0) {
 		struct kr_query *last = array_tail(rplan->pending);
-		if ((last->flags & QUERY_DNSSEC_WANT) && (last->flags & QUERY_DNSSEC_BOGUS)) {
+		if ((last->flags.DNSSEC_WANT) && (last->flags.DNSSEC_BOGUS)) {
 			return answer_fail(request);
 		}
 	}
@@ -566,10 +566,10 @@ static int answer_finalize(struct kr_request *request, int state)
 	struct kr_query *last = rplan->resolved.len > 0 ? array_tail(rplan->resolved) : NULL;
 		/* TODO  ^^^^ this is slightly fragile */
 	bool secure = (last != NULL); /* suspicious otherwise */
-	if (last && (last->flags & QUERY_STUB)) {
+	if (last && (last->flags.STUB)) {
 		secure = false; /* don't trust forwarding for now */
 	}
-	if (last && (last->flags & QUERY_DNSSEC_OPTOUT)) {
+	if (last && (last->flags.DNSSEC_OPTOUT)) {
 		secure = false; /* the last answer is insecure due to opt-out */
 	}
 
@@ -610,7 +610,7 @@ static int answer_finalize(struct kr_request *request, int state)
 
 	/* AD: negative answers need more handling. */
 	if (kr_response_classify(answer) != PKT_NOERROR && last) {
-		const bool OK = (last->flags & QUERY_DNSSEC_WANT)
+		const bool OK = (last->flags.DNSSEC_WANT)
 			&& !(last->flags & (QUERY_DNSSEC_BOGUS | QUERY_DNSSEC_INSECURE));
 		if (!OK) {
 			secure = false;
@@ -629,7 +629,7 @@ static int query_finalize(struct kr_request *request, struct kr_query *qry, knot
 {
 	int ret = 0;
 	knot_pkt_begin(pkt, KNOT_ADDITIONAL);
-	if (!(qry->flags & QUERY_SAFEMODE)) {
+	if (!(qry->flags.SAFEMODE)) {
 		/* Remove any EDNS records from any previous iteration. */
 		ret = edns_erase_and_reserve(pkt);
 		if (ret == 0) {
@@ -637,7 +637,7 @@ static int query_finalize(struct kr_request *request, struct kr_query *qry, knot
 		}
 		if (ret == 0) {
 			/* Stub resolution (ask for +rd and +do) */
-			if (qry->flags & QUERY_STUB) {
+			if (qry->flags.STUB) {
 				knot_wire_set_rd(pkt->wire);
 				if (knot_pkt_has_dnssec(request->answer)) {
 					knot_edns_set_do(pkt->opt_rr);
@@ -646,7 +646,7 @@ static int query_finalize(struct kr_request *request, struct kr_query *qry, knot
 					knot_wire_set_cd(pkt->wire);
 				}
 			/* Full resolution (ask for +cd and +do) */
-			} else if (qry->flags & QUERY_DNSSEC_WANT) {
+			} else if (qry->flags.DNSSEC_WANT) {
 				knot_edns_set_do(pkt->opt_rr);
 				knot_wire_set_cd(pkt->wire);
 			}
@@ -697,11 +697,11 @@ static int resolve_query(struct kr_request *request, const knot_pkt_t *packet)
 	}
 
 	/* Deferred zone cut lookup for this query. */
-	qry->flags |= QUERY_AWAIT_CUT;
+	qry->flags.AWAIT_CUT = true;
 	/* Want DNSSEC if it's posible to secure this name (e.g. is covered by any TA) */
 	if ((knot_wire_get_ad(packet->wire) || knot_pkt_has_dnssec(packet)) &&
 	    kr_ta_covers_qry(request->ctx, qname, qtype)) {
-		qry->flags |= QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_WANT = true;
 	}
 
 	/* Initialize answer packet */
@@ -713,7 +713,7 @@ static int resolve_query(struct kr_request *request, const knot_pkt_t *packet)
 
 	if (cd_is_set) {
 		knot_wire_set_cd(answer->wire);
-	} else if (qry->flags & QUERY_DNSSEC_WANT) {
+	} else if (qry->flags.DNSSEC_WANT) {
 		knot_wire_set_ad(answer->wire);
 	}
 
@@ -737,7 +737,7 @@ KR_PURE static bool kr_inaddr_equal(const struct sockaddr *a, const struct socka
 static void update_nslist_rtt(struct kr_context *ctx, struct kr_query *qry, const struct sockaddr *src)
 {
 	/* Do not track in safe mode. */
-	if (qry->flags & QUERY_SAFEMODE) {
+	if (qry->flags.SAFEMODE) {
 		return;
 	}
 
@@ -801,7 +801,7 @@ static void update_nslist_score(struct kr_request *request, struct kr_query *qry
 			kr_nsrep_update_rtt(&qry->ns, src, KR_NS_PENALTY, ctx->cache_rtt, KR_NS_ADD);
 		}
 	/* Penalise resolution failures except validation failures. */
-	} else if (!(qry->flags & QUERY_DNSSEC_BOGUS)) {
+	} else if (!(qry->flags.DNSSEC_BOGUS)) {
 		kr_nsrep_update_rtt(&qry->ns, src, KR_NS_TIMEOUT, ctx->cache_rtt, KR_NS_RESET);
 		WITH_VERBOSE {
 			char addr_str[INET6_ADDRSTRLEN];
@@ -825,12 +825,12 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 
 	/* Different processing for network error */
 	struct kr_query *qry = array_tail(rplan->pending);
-	bool tried_tcp = (qry->flags & QUERY_TCP);
+	bool tried_tcp = (qry->flags.TCP);
 	if (!packet || packet->size == 0) {
 		if (tried_tcp) {
 			request->state = KR_STATE_FAIL;
 		} else {
-			qry->flags |= QUERY_TCP;
+			qry->flags.TCP = true;
 		}
 	} else {
 		/* Packet cleared, derandomize QNAME. */
@@ -839,7 +839,7 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 			randomized_qname_case(qname_raw, qry->secret);
 		}
 		request->state = KR_STATE_CONSUME;
-		if (qry->flags & QUERY_CACHED) {
+		if (qry->flags.CACHED) {
 			ITERATE_LAYERS(request, qry, consume, packet);
 		} else {
 			struct timeval now;
@@ -855,21 +855,21 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 	}
 
 	/* Track RTT for iterative answers */
-	if (src && !(qry->flags & QUERY_CACHED)) {
+	if (src && !(qry->flags.CACHED)) {
 		update_nslist_score(request, qry, src, packet);
 	}
 	/* Resolution failed, invalidate current NS. */
 	if (request->state == KR_STATE_FAIL) {
 		invalidate_ns(rplan, qry);
-		qry->flags &= ~QUERY_RESOLVED;
+		qry->flags.RESOLVED = false;
 	}
 
 	/* Pop query if resolved. */
 	if (request->state == KR_STATE_YIELD) {
 		return KR_STATE_PRODUCE; /* Requery */
-	} else if (qry->flags & QUERY_RESOLVED) {
+	} else if (qry->flags.RESOLVED) {
 		kr_rplan_pop(rplan, qry);
-	} else if (!tried_tcp && (qry->flags & QUERY_TCP)) {
+	} else if (!tried_tcp && (qry->flags.TCP)) {
 		return KR_STATE_PRODUCE; /* Requery over TCP */
 	} else { /* Clear query flags for next attempt */
 		qry->flags &= ~(QUERY_CACHED|QUERY_TCP);
@@ -878,7 +878,7 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 	ITERATE_LAYERS(request, qry, reset);
 
 	/* Do not finish with bogus answer. */
-	if (qry->flags & QUERY_DNSSEC_BOGUS)  {
+	if (qry->flags.DNSSEC_BOGUS)  {
 		return KR_STATE_FAIL;
 	}
 
@@ -898,9 +898,9 @@ static struct kr_query *zone_cut_subreq(struct kr_rplan *rplan, struct kr_query 
 	    kr_zonecut_copy_trust(&next->zone_cut, &parent->zone_cut) != 0) {
 		return NULL;
 	}
-	next->flags |= QUERY_NO_MINIMIZE;
-	if (parent->flags & QUERY_DNSSEC_WANT) {
-		next->flags |= QUERY_DNSSEC_WANT;
+	next->flags.NO_MINIMIZE = true;
+	if (parent->flags.DNSSEC_WANT) {
+		next->flags.DNSSEC_WANT = true;
 	}
 	return next;
 }
@@ -915,23 +915,23 @@ static int trust_chain_check(struct kr_request *request, struct kr_query *qry)
 	/* Disable DNSSEC if it enters NTA. */
 	if (kr_ta_get(negative_anchors, qry->zone_cut.name)){
 		VERBOSE_MSG(qry, ">< negative TA, going insecure\n");
-		qry->flags &= ~QUERY_DNSSEC_WANT;
-		qry->flags |= QUERY_DNSSEC_INSECURE;
+		qry->flags.DNSSEC_WANT = false;
+		qry->flags.DNSSEC_INSECURE = true;
 	}
-	if (qry->flags & QUERY_DNSSEC_NODS) {
+	if (qry->flags.DNSSEC_NODS) {
 		/* This is the next query iteration with minimized qname.
 		 * At previous iteration DS non-existance has been proven */
-		qry->flags &= ~QUERY_DNSSEC_NODS;
-		qry->flags &= ~QUERY_DNSSEC_WANT;
-		qry->flags |= QUERY_DNSSEC_INSECURE;
+		qry->flags.DNSSEC_NODS = false;
+		qry->flags.DNSSEC_WANT = false;
+		qry->flags.DNSSEC_INSECURE = true;
 	}
 	/* Enable DNSSEC if entering a new (or different) island of trust,
 	 * and update the TA RRset if required. */
-	bool want_secured = (qry->flags & QUERY_DNSSEC_WANT) &&
+	bool want_secured = (qry->flags.DNSSEC_WANT) &&
 			    !knot_wire_get_cd(request->answer->wire);
 	knot_rrset_t *ta_rr = kr_ta_get(trust_anchors, qry->zone_cut.name);
 	if (!knot_wire_get_cd(request->answer->wire) && ta_rr) {
-		qry->flags |= QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_WANT = true;
 		want_secured = true;
 
 		if (qry->zone_cut.trust_anchor == NULL
@@ -979,11 +979,11 @@ static int trust_chain_check(struct kr_request *request, struct kr_query *qry)
 static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot_pkt_t *packet)
 {
 	/* Stub mode, just forward and do not solve cut. */
-	if (qry->flags & QUERY_STUB) {
+	if (qry->flags.STUB) {
 		return KR_STATE_PRODUCE;
 	}
 
-	if (!(qry->flags & QUERY_AWAIT_CUT)) {
+	if (!(qry->flags.AWAIT_CUT)) {
 		/* The query was resolved from cache.
 		 * Spawn DS \ DNSKEY requests if needed and exit */
 		return trust_chain_check(request, qry);
@@ -998,7 +998,7 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 			return KR_STATE_FAIL;
 		}
 		VERBOSE_MSG(qry, "=> using root hints\n");
-		qry->flags &= ~QUERY_AWAIT_CUT;
+		qry->flags.AWAIT_CUT = false;
 		return KR_STATE_DONE;
 	}
 
@@ -1027,12 +1027,12 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 	} while (state == KR_STATE_CONSUME);
 
 	/* Update minimized QNAME if zone cut changed */
-	if (qry->zone_cut.name[0] != '\0' && !(qry->flags & QUERY_NO_MINIMIZE)) {
+	if (qry->zone_cut.name[0] != '\0' && !(qry->flags.NO_MINIMIZE)) {
 		if (kr_make_query(qry, packet) != 0) {
 			return KR_STATE_FAIL;
 		}
 	}
-	qry->flags &= ~QUERY_AWAIT_CUT;
+	qry->flags.AWAIT_CUT = false;
 
 	/* Check trust chain */
 	return trust_chain_check(request, qry);
@@ -1069,7 +1069,7 @@ int kr_resolve_produce(struct kr_request *request, struct sockaddr **dst, int *t
 	} else {
 		/* Caller is interested in always tracking a zone cut, even if the answer is cached
 		 * this is normally not required, and incurrs another cache lookups for cached answer. */
-		if (qry->flags & QUERY_ALWAYS_CUT) {
+		if (qry->flags.ALWAYS_CUT) {
 			switch(zone_cut_check(request, qry, packet)) {
 			case KR_STATE_FAIL: return KR_STATE_FAIL;
 			case KR_STATE_DONE: return KR_STATE_PRODUCE;
@@ -1106,7 +1106,7 @@ int kr_resolve_produce(struct kr_request *request, struct sockaddr **dst, int *t
 	}
 
 	/* Update zone cut, spawn new subrequests. */
-	if (!(qry->flags & QUERY_STUB)) {
+	if (!(qry->flags.STUB)) {
 		int state = zone_cut_check(request, qry, packet);
 		switch(state) {
 		case KR_STATE_FAIL: return KR_STATE_FAIL;
@@ -1132,7 +1132,7 @@ ns_election:
 		/* Root DNSKEY must be fetched from the hints to avoid chicken and egg problem. */
 		if (qry->sname[0] == '\0' && qry->stype == KNOT_RRTYPE_DNSKEY) {
 			kr_zonecut_set_sbelt(request->ctx, &qry->zone_cut);
-			qry->flags |= QUERY_NO_THROTTLE; /* Pick even bad SBELT servers */
+			qry->flags.NO_THROTTLE = true; /* Pick even bad SBELT servers */
 		}
 		kr_nsrep_elect(qry, request->ctx);
 		if (qry->ns.score > KR_NS_MAX_SCORE) {
@@ -1168,7 +1168,7 @@ ns_election:
 
 	gettimeofday(&qry->timestamp, NULL);
 	*dst = &qry->ns.addr[0].ip;
-	*type = (qry->flags & QUERY_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+	*type = (qry->flags.TCP) ? SOCK_STREAM : SOCK_DGRAM;
 	return request->state;
 }
 
@@ -1255,7 +1255,7 @@ int kr_resolve_checkout(struct kr_request *request, struct sockaddr *src,
 		}
 		inet_ntop(addr->sa_family, kr_nsrep_inaddr(qry->ns.addr[i]), ns_str, sizeof(ns_str));
 		VERBOSE_MSG(qry, "=> querying: '%s' score: %u zone cut: '%s' m12n: '%s' type: '%s' proto: '%s'\n",
-			ns_str, qry->ns.score, zonecut_str, qname_str, type_str, (qry->flags & QUERY_TCP) ? "tcp" : "udp");
+			ns_str, qry->ns.score, zonecut_str, qname_str, type_str, (qry->flags.TCP) ? "tcp" : "udp");
 		break;
 	}}
 

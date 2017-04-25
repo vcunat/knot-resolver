@@ -87,13 +87,13 @@ static int loot_rr(struct kr_cache *cache, knot_pkt_t *pkt, const knot_dname_t *
 
 	/* Mark as expiring if it has less than 1% TTL (or less than 5s) */
 	if (is_expiring(&cache_rr, drift)) {
-		qry->flags |= QUERY_EXPIRING;
+		qry->flags.EXPIRING = true;
 	}
 
 	if ((*flags) & KR_CACHE_FLAG_WCARD_PROOF) {
 		/* Record was found, but wildcard answer proof is needed.
 		 * Do not update packet, try to fetch whole packet from pktcache instead. */
-		qry->flags |= QUERY_DNSSEC_WEXPAND;
+		qry->flags.DNSSEC_WEXPAND = true;
 		return kr_error(ENOENT);
 	}
 
@@ -158,7 +158,7 @@ static int loot_rrcache(struct kr_context *ctx, knot_pkt_t *pkt,
 	uint8_t flags = 0;
 	uint8_t lowest_rank = (ta_covers ? KR_RANK_INSECURE : KR_RANK_INITIAL)
 		| KR_RANK_AUTH;
-	if (qry->flags & QUERY_NONAUTH) {
+	if (qry->flags.NONAUTH) {
 		lowest_rank = KR_RANK_INITIAL;
 		/* Note: there's little sense in validation status for non-auth records.
 		 * In case of using NONAUTH to get NS IPs, knowing that you ask correct
@@ -183,12 +183,12 @@ static int loot_rrcache(struct kr_context *ctx, knot_pkt_t *pkt,
 	}
 
 	if (kr_rank_test(rank, KR_RANK_INSECURE)) {
-		qry->flags |= QUERY_DNSSEC_INSECURE;
-		qry->flags &= ~QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_INSECURE = true;
+		qry->flags.DNSSEC_WANT = false;
 	}
 
 	/* Record may have RRSIGs, try to find them. */
-	const bool dobit = (qry->flags & QUERY_DNSSEC_WANT);
+	const bool dobit = (qry->flags.DNSSEC_WANT);
 	if (cdbit || (dobit && kr_rank_test(rank, KR_RANK_SECURE))) {
 		kr_rank_set(&lowest_rank, KR_RANK_INITIAL); /* no security for RRSIGs */
 		ret = loot_rr(cache, pkt, qry->sname, qry->sclass, rrtype, qry,
@@ -216,7 +216,7 @@ static int rrcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 {
 	struct kr_request *req = ctx->req;
 	struct kr_query *qry = req->current_query;
-	if (ctx->state & (KR_STATE_FAIL|KR_STATE_DONE) || (qry->flags & QUERY_NO_CACHE)) {
+	if (ctx->state & (KR_STATE_FAIL|KR_STATE_DONE) || (qry->flags.NO_CACHE)) {
 		return ctx->state; /* Already resolved/failed */
 	}
 	if (qry->ns.addr[0].ip.sa_family != AF_UNSPEC) {
@@ -264,7 +264,7 @@ struct rrcache_baton
 static int commit_rrsig(struct rrcache_baton *baton, uint8_t rank, uint8_t flags, knot_rrset_t *rr)
 {
 	/* If not doing secure resolution, ignore (unvalidated) RRSIGs. */
-	if (!(baton->qry->flags & QUERY_DNSSEC_WANT)) {
+	if (!(baton->qry->flags.DNSSEC_WANT)) {
 		return kr_ok();
 	}
 	/* Commit covering RRSIG to a separate cache namespace. */
@@ -311,11 +311,11 @@ static int commit_rr(const char *key, void *val, void *data)
 
 	uint8_t flags = KR_CACHE_FLAG_NONE;
 	if (kr_rank_test(rank, KR_RANK_AUTH)) {
-		if (baton->qry->flags & QUERY_DNSSEC_WEXPAND) {
+		if (baton->qry->flags.DNSSEC_WEXPAND) {
 			flags |= KR_CACHE_FLAG_WCARD_PROOF;
 		}
 		if ((rr->type == KNOT_RRTYPE_NS) &&
-		    (baton->qry->flags & QUERY_DNSSEC_NODS)) {
+		    (baton->qry->flags.DNSSEC_NODS)) {
 			flags |= KR_CACHE_FLAG_NODS;
 		}
 	}
@@ -402,7 +402,7 @@ static int rrcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 	/* Cache only positive answers, not meta types or RRSIG. */
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = !(knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
-	if (qry->flags & QUERY_CACHED || knot_wire_get_rcode(pkt->wire) != KNOT_RCODE_NOERROR || !is_eligible) {
+	if (qry->flags.CACHED || knot_wire_get_rcode(pkt->wire) != KNOT_RCODE_NOERROR || !is_eligible) {
 		return ctx->state;
 	}
 	/* Stash data selected by iterator from the last receieved packet. */

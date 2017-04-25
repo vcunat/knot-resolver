@@ -106,8 +106,8 @@ static int loot_pktcache(struct kr_context *ctx, knot_pkt_t *pkt,
 
 	/* Rank-related fixups.  Add rank into the additional field. */
 	if (kr_rank_test(entry->rank, KR_RANK_INSECURE)) {
-		qry->flags |= QUERY_DNSSEC_INSECURE;
-		qry->flags &= ~QUERY_DNSSEC_WANT;
+		qry->flags.DNSSEC_INSECURE = true;
+		qry->flags.DNSSEC_WANT = false;
 	}
 	for (size_t i = 0; i < pkt->rrset_count; ++i) {
 		assert(!pkt->rr[i].additional);
@@ -141,7 +141,7 @@ static int pktcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 	struct kr_request *req = ctx->req;
 	struct kr_query *qry = req->current_query;
 	if (ctx->state & (KR_STATE_FAIL|KR_STATE_DONE) ||
-	    (qry->flags & QUERY_NO_CACHE)) {
+	    (qry->flags.NO_CACHE)) {
 		return ctx->state; /* Already resolved/failed */
 	}
 	if (qry->ns.addr[0].ip.sa_family != AF_UNSPEC) {
@@ -157,10 +157,10 @@ static int pktcache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 	if (ret == 0) {
 		qry->flags |= QUERY_CACHED|QUERY_NO_MINIMIZE;
 		if (flags & KR_CACHE_FLAG_WCARD_PROOF) {
-			qry->flags |= QUERY_DNSSEC_WEXPAND;
+			qry->flags.DNSSEC_WEXPAND = true;
 		}
 		if (flags & KR_CACHE_FLAG_OPTOUT) {
-			qry->flags |= QUERY_DNSSEC_OPTOUT;
+			qry->flags.DNSSEC_OPTOUT = true;
 		}
 		pkt->parsed = pkt->size;
 		knot_wire_set_qr(pkt->wire);
@@ -214,7 +214,7 @@ static int pktcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 	struct kr_query *qry = req->current_query;
 	/* Cache only answers that make query resolved (i.e. authoritative)
 	 * that didn't fail during processing and are negative. */
-	if (qry->flags & QUERY_CACHED || ctx->state & KR_STATE_FAIL) {
+	if (qry->flags.CACHED || ctx->state & KR_STATE_FAIL) {
 		return ctx->state; /* Don't cache anything if failed. */
 	}
 	/* Cache only authoritative answers from IN class. */
@@ -225,7 +225,7 @@ static int pktcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 	const uint16_t qtype = knot_pkt_qtype(pkt);
 	const bool is_eligible = (knot_rrtype_is_metatype(qtype) || qtype == KNOT_RRTYPE_RRSIG);
 	const bool is_negative = kr_response_classify(pkt) & (PKT_NODATA|PKT_NXDOMAIN);
-	if (!(is_eligible || is_negative || (qry->flags & QUERY_DNSSEC_WEXPAND))) {
+	if (!(is_eligible || is_negative || (qry->flags.DNSSEC_WEXPAND))) {
 		return ctx->state;
 	}
 	uint32_t ttl = packet_ttl(pkt, is_negative);
@@ -250,21 +250,21 @@ static int pktcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 	if (knot_wire_get_cd(req->answer->wire)) {
 		kr_rank_set(&header.rank, KR_RANK_OMIT);
 	} else {
-		if (qry->flags & QUERY_DNSSEC_BOGUS) {
+		if (qry->flags.DNSSEC_BOGUS) {
 			kr_rank_set(&header.rank, KR_RANK_BOGUS);
-		} else if (qry->flags & QUERY_DNSSEC_INSECURE) {
+		} else if (qry->flags.DNSSEC_INSECURE) {
 			kr_rank_set(&header.rank, KR_RANK_INSECURE);
-		} else if (qry->flags & QUERY_DNSSEC_WANT) {
+		} else if (qry->flags.DNSSEC_WANT) {
 			kr_rank_set(&header.rank, KR_RANK_SECURE);
 		}
 	}
 	VERBOSE_MSG(qry, "=> candidate rank: 0%0.2o\n", header.rank);
 
 	/* Set cache flags */
-	if (qry->flags & QUERY_DNSSEC_WEXPAND) {
+	if (qry->flags.DNSSEC_WEXPAND) {
 		header.flags |= KR_CACHE_FLAG_WCARD_PROOF;
 	}
-	if (qry->flags & QUERY_DNSSEC_OPTOUT) {
+	if (qry->flags.DNSSEC_OPTOUT) {
 		header.flags |= KR_CACHE_FLAG_OPTOUT;
 	}
 

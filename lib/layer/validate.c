@@ -173,10 +173,10 @@ static int validate_records(struct kr_request *req, knot_pkt_t *answer, knot_mm_
 	 * or optout - flag the query.
          */
 	if (an_flags & KR_DNSSEC_VFLG_WEXPAND) {
-		qry->flags |= QUERY_DNSSEC_WEXPAND;
+		qry->flags.DNSSEC_WEXPAND = true;
 	}
 	if (an_flags & KR_DNSSEC_VFLG_OPTOUT) {
-		qry->flags |= QUERY_DNSSEC_OPTOUT;
+		qry->flags.DNSSEC_OPTOUT = true;
 	}
 
 	return ret;
@@ -212,7 +212,7 @@ static int validate_keyset(struct kr_request *req, knot_pkt_t *answer, bool has_
 	}
 
 	/* Check if there's a key for current TA. */
-	if (updated_key && !(qry->flags & QUERY_CACHED)) {
+	if (updated_key && !(qry->flags.CACHED)) {
 
 		kr_rrset_validation_ctx_t vctx = {
 			.pkt		= answer,
@@ -233,10 +233,10 @@ static int validate_keyset(struct kr_request *req, knot_pkt_t *answer, bool has_
 		}
 
 		if (vctx.flags & KR_DNSSEC_VFLG_WEXPAND) {
-			qry->flags |= QUERY_DNSSEC_WEXPAND;
+			qry->flags.DNSSEC_WEXPAND = true;
 		}
 		if (vctx.flags & KR_DNSSEC_VFLG_OPTOUT) {
-			qry->flags |= QUERY_DNSSEC_OPTOUT;
+			qry->flags.DNSSEC_OPTOUT = true;
 		}
 
 	}
@@ -279,8 +279,8 @@ static void mark_insecure_parents(const struct kr_query *qry)
 	struct kr_query *parent = qry->parent;
 	const uint32_t cut_flags = (QUERY_AWAIT_IPV4 | QUERY_AWAIT_IPV6);
 	while (parent && ((parent->flags & cut_flags) == 0)) {
-		parent->flags &= ~QUERY_DNSSEC_WANT;
-		parent->flags |= QUERY_DNSSEC_INSECURE;
+		parent->flags.DNSSEC_WANT = false;
+		parent->flags.DNSSEC_INSECURE = true;
 		if (parent->stype != KNOT_RRTYPE_DS &&
 		    parent->stype != KNOT_RRTYPE_RRSIG) {
 			break;
@@ -377,10 +377,10 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 			}
 		} else if (ret != 0) {
 			VERBOSE_MSG(qry, "<= bogus proof of DS non-existence\n");
-			qry->flags |= QUERY_DNSSEC_BOGUS;
+			qry->flags.DNSSEC_BOGUS = true;
 		} else {
 			VERBOSE_MSG(qry, "<= DS doesn't exist, going insecure\n");
-			qry->flags |= QUERY_DNSSEC_NODS;
+			qry->flags.DNSSEC_NODS = true;
 		}
 		return ret;
 	}
@@ -451,9 +451,9 @@ static int rrsig_not_found(kr_layer_t *ctx, const knot_rrset_t *rr)
 		kr_zonecut_copy(&next->zone_cut, cut);
 		kr_zonecut_copy_trust(&next->zone_cut, cut);
 	} else {
-		next->flags |= QUERY_AWAIT_CUT;
+		next->flags.AWAIT_CUT = true;
 	}
-	next->flags |= QUERY_DNSSEC_WANT;
+	next->flags.DNSSEC_WANT = true;
 	return KR_STATE_YIELD;
 }
 
@@ -487,7 +487,7 @@ static int check_validation_result(kr_layer_t *ctx, ranked_rr_array_t *arr)
 	if (!kr_rank_test(invalid_entry->rank, KR_RANK_SECURE) &&
 	    (++(invalid_entry->revalidation_cnt) > MAX_REVALIDATION_CNT)) {
 		VERBOSE_MSG(qry, "<= continuous revalidation, fails\n");
-		qry->flags |= QUERY_DNSSEC_BOGUS;
+		qry->flags.DNSSEC_BOGUS = true;
 		return KR_STATE_FAIL;
 	}
 
@@ -496,12 +496,12 @@ static int check_validation_result(kr_layer_t *ctx, ranked_rr_array_t *arr)
 		const knot_dname_t *signer_name = knot_rrsig_signer_name(&rr->rrs, 0);
 		if (knot_dname_is_sub(signer_name, qry->zone_cut.name)) {
 			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
-			qry->flags |= QUERY_AWAIT_CUT;
+			qry->flags.AWAIT_CUT = true;
 		} else if (!knot_dname_is_equal(signer_name, qry->zone_cut.name)) {
 			if (qry->zone_cut.parent) {
 				memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
 			} else {
-				qry->flags |= QUERY_AWAIT_CUT;
+				qry->flags.AWAIT_CUT = true;
 			}
 			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
 		}
@@ -510,7 +510,7 @@ static int check_validation_result(kr_layer_t *ctx, ranked_rr_array_t *arr)
 	} else if (kr_rank_test(invalid_entry->rank, KR_RANK_MISSING)) {
 		ret = rrsig_not_found(ctx, rr);
 	} else if (!kr_rank_test(invalid_entry->rank, KR_RANK_SECURE)) {
-		qry->flags |= QUERY_DNSSEC_BOGUS;
+		qry->flags.DNSSEC_BOGUS = true;
 		ret = KR_STATE_FAIL;
 	}
 
@@ -575,7 +575,7 @@ static int check_signer(kr_layer_t *ctx, knot_pkt_t *pkt)
 			if (qry->zone_cut.parent) {
 				memcpy(&qry->zone_cut, qry->zone_cut.parent, sizeof(qry->zone_cut));
 			} else {
-				qry->flags |= QUERY_AWAIT_CUT;
+				qry->flags.AWAIT_CUT = true;
 			}
 			qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
 		} /* else zone cut matches, but DS/DNSKEY doesn't => refetch. */
@@ -616,14 +616,14 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 
 	/* Pass-through if user doesn't want secure answer or stub. */
 	/* @todo: Validating stub resolver mode. */
-	if (qry->flags & QUERY_STUB) {
+	if (qry->flags.STUB) {
 		rank_records(ctx, KR_RANK_OMIT);
 		return ctx->state;
 	}
-	if (!(qry->flags & QUERY_DNSSEC_WANT)) {
+	if (!(qry->flags.DNSSEC_WANT)) {
 		const uint32_t test_flags = (QUERY_CACHED | QUERY_DNSSEC_INSECURE);
 		const bool is_insec = ((qry->flags & test_flags) == test_flags);
-		if ((qry->flags & QUERY_DNSSEC_INSECURE)) {
+		if ((qry->flags.DNSSEC_INSECURE)) {
 			rank_records(ctx, KR_RANK_INSECURE);
 		}
 		if (is_insec && qry->parent != NULL) {
@@ -649,9 +649,9 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 	}
 	/* Answer for RRSIG may not set DO=1, but all records MUST still validate. */
 	bool use_signatures = (knot_pkt_qtype(pkt) != KNOT_RRTYPE_RRSIG);
-	if (!(qry->flags & QUERY_CACHED) && !knot_pkt_has_dnssec(pkt) && !use_signatures) {
+	if (!(qry->flags.CACHED) && !knot_pkt_has_dnssec(pkt) && !use_signatures) {
 		VERBOSE_MSG(qry, "<= got insecure response\n");
-		qry->flags |= QUERY_DNSSEC_BOGUS;
+		qry->flags.DNSSEC_BOGUS = true;
 		return KR_STATE_FAIL;
 	}
 
@@ -663,12 +663,12 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 	const bool referral = (an->count == 0 && !knot_wire_get_aa(pkt->wire));
 	const bool no_data = (an->count == 0 && knot_wire_get_aa(pkt->wire));
 
-	if (!(qry->flags & QUERY_CACHED) && knot_wire_get_aa(pkt->wire)) {
+	if (!(qry->flags.CACHED) && knot_wire_get_aa(pkt->wire)) {
 		/* Check if answer if not empty,
 		 * but iterator has not selected any records. */
 		if (!check_empty_answer(ctx, pkt)) {
 			VERBOSE_MSG(qry, "<= no useful RR in authoritative answer\n");
-			qry->flags |= QUERY_DNSSEC_BOGUS;
+			qry->flags.DNSSEC_BOGUS = true;
 			return KR_STATE_FAIL;
 		}
 		/* Track difference between current TA and signer name.
@@ -688,13 +688,13 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 			return KR_STATE_YIELD;
 		} else if (ret != 0) {
 			VERBOSE_MSG(qry, "<= bad keys, broken trust chain\n");
-			qry->flags |= QUERY_DNSSEC_BOGUS;
+			qry->flags.DNSSEC_BOGUS = true;
 			return KR_STATE_FAIL;
 		}
 	}
 
 	/* Validate non-existence proof if not positive answer. */
-	if (!(qry->flags & QUERY_CACHED) && pkt_rcode == KNOT_RCODE_NXDOMAIN) {
+	if (!(qry->flags.CACHED) && pkt_rcode == KNOT_RCODE_NXDOMAIN) {
 		/* @todo If knot_pkt_qname(pkt) is used instead of qry->sname then the tests crash. */
 		if (!has_nsec3) {
 			ret = kr_nsec_name_error_response_check(pkt, KNOT_AUTHORITY, qry->sname);
@@ -706,11 +706,11 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 			 * but NSEC3 that covers next closer name
 			 * (or wildcard at next closer name) has opt-out flag.
 			 * RFC5155 9.2; AD flag can not be set */
-			qry->flags |= QUERY_DNSSEC_OPTOUT;
+			qry->flags.DNSSEC_OPTOUT = true;
 			VERBOSE_MSG(qry, "<= can't prove NXDOMAIN due to optout, going insecure\n");
 		} else if (ret != 0) {
 			VERBOSE_MSG(qry, "<= bad NXDOMAIN proof\n");
-			qry->flags |= QUERY_DNSSEC_BOGUS;
+			qry->flags.DNSSEC_BOGUS = true;
 			return KR_STATE_FAIL;
 		}
 	}
@@ -718,7 +718,7 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 	/* @todo WTH, this needs API that just tries to find a proof and the caller
 	 * doesn't have to worry about NSEC/NSEC3
 	 * @todo rework this */
-	if (!(qry->flags & QUERY_CACHED)) {
+	if (!(qry->flags.CACHED)) {
 		if (pkt_rcode == KNOT_RCODE_NOERROR && no_data) {
 			/* @todo
 			 * ? quick mechanism to determine which check to preform first
@@ -732,14 +732,14 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 			if (ret != 0) {
 				if (has_nsec3 && (ret == kr_error(DNSSEC_OUT_OF_RANGE))) {
 					VERBOSE_MSG(qry, "<= can't prove NODATA due to optout, going insecure\n");
-					qry->flags |= QUERY_DNSSEC_OPTOUT;
+					qry->flags.DNSSEC_OPTOUT = true;
 					/* Could not return from here,
 					 * we must continue, validate NSEC\NSEC3 and
 					 * call update_parent_keys() to mark
 					 * parent queries as insecured */
 				} else {
 					VERBOSE_MSG(qry, "<= bad NODATA proof\n");
-					qry->flags |= QUERY_DNSSEC_BOGUS;
+					qry->flags.DNSSEC_BOGUS = true;
 					return KR_STATE_FAIL;
 				}
 			}
@@ -748,13 +748,13 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 
 	/* Validate all records, fail as bogus if it doesn't match.
 	 * Do not revalidate data from cache, as it's already trusted. */
-	if (!(qry->flags & QUERY_CACHED)) {
+	if (!(qry->flags.CACHED)) {
 		ret = validate_records(req, pkt, req->rplan.pool, has_nsec3);
 		if (ret != 0) {
 			/* something exceptional - no DNS key, empty pointers etc
 			 * normally it shoudn't happen */
 			VERBOSE_MSG(qry, "<= couldn't validate RRSIGs\n");
-			qry->flags |= QUERY_DNSSEC_BOGUS;
+			qry->flags.DNSSEC_BOGUS = true;
 			return KR_STATE_FAIL;
 		}
 		/* check validation state and spawn subrequests */
@@ -774,7 +774,7 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 
 	/* Check if wildcard expansion detected for final query.
 	 * If yes, copy authority. */
-	if ((qry->parent == NULL) && (qry->flags & QUERY_DNSSEC_WEXPAND)) {
+	if ((qry->parent == NULL) && (qry->flags.DNSSEC_WEXPAND)) {
 		kr_ranked_rrarray_set_wire(&req->auth_selected, true, qry->uid, true);
 	}
 
@@ -783,7 +783,7 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 	if (ret == DNSSEC_NOT_FOUND && qry->stype != KNOT_RRTYPE_DS) {
 		if (ctx->state == KR_STATE_YIELD) {
 			VERBOSE_MSG(qry, "<= can't validate referral\n");
-			qry->flags |= QUERY_DNSSEC_BOGUS;
+			qry->flags.DNSSEC_BOGUS = true;
 			return KR_STATE_FAIL;
 		} else {
 			/* Check the trust chain and query DS\DNSKEY if needed. */
@@ -795,7 +795,7 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 	} else if (pkt_rcode == KNOT_RCODE_NOERROR &&
 		   referral &&
 		   (((qry->flags & (QUERY_DNSSEC_WANT | QUERY_DNSSEC_INSECURE)) == QUERY_DNSSEC_INSECURE) ||
-		   (qry->flags & QUERY_DNSSEC_NODS))) {
+		   (qry->flags.DNSSEC_NODS))) {
 		/* referral with proven DS non-existance */
 		qtype = KNOT_RRTYPE_DS;
 	}
