@@ -60,8 +60,8 @@
 			/* 1 << 31       Used by ../modules/dns64/dns64.lua */
 
 /** Query flags */
-enum kr_query_flag {
-	#define X(flag, val) QUERY_ ## flag = val,
+struct kr_qflags {
+	#define X(flag, val) bool flag : 1;
 	QUERY_FLAGS(X)
 	#undef X
 };
@@ -79,7 +79,7 @@ struct kr_query {
 	uint16_t stype;
 	uint16_t sclass;
 	uint16_t id;
-	uint32_t flags;
+	struct kr_qflags flags;
 	uint32_t secret;
 	uint16_t fails;
 	uint16_t reorder; /**< Seed to reorder (cached) RRs in answer or zero. */
