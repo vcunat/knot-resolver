@@ -57,7 +57,7 @@
 	X(DNSSEC_OPTOUT,   1 << 28) /**< Closest encloser proof has optout */ \
 	X(NONAUTH,         1 << 29) /**< Non-authoritative in-bailiwick records are enough.
 				     *   TODO: utilize this also outside cache. */ \
-			/* 1 << 31       Used by ../modules/dns64/dns64.lua */
+	X(DNS64_MARK,      1 << 31)
 
 /** Query flags */
 struct kr_qflags {
@@ -66,6 +66,13 @@ struct kr_qflags {
 	#undef X
 };
 
+/** Combine flags together.  This means set union for simple flags. */
+KR_EXPORT
+void kr_qflags_set(struct kr_qflags *fl1, struct kr_qflags fl2);
+
+/** Remove flags.  This means set-theoretic difference. */
+KR_EXPORT
+void kr_qflags_clear(struct kr_qflags *fl1, struct kr_qflags fl2);
 
 /**
  * Single query representation.

@@ -33,6 +33,7 @@ typedef void (*map_free_f)(void *baton, void *ptr);
 	# generics
 	map_t
 	# libkres
+	struct kr_qflags
 	rr_array_t
 	struct ranked_rr_array_entry
 	ranked_rr_array_entry_t
@@ -60,12 +61,6 @@ printf "\t/* ^hidden stub^ */\n\tchar _stub[];\n};\n"
 
 genResType "struct kr_context" | sed '/struct kr_cache/,$ d'
 printf "\tchar _stub[];\n};\n"
-
-# Getting struct query_flag is a bit complex.
-genResType "enum kr_query_flag" | sed -e 's/enum kr_query_flag/struct query_flag/' \
-		-e 's/QUERY_NO_THROTTLE/& = 2/' `# a special case for consecutive integers` \
-		-e 's@\<QUERY_\([A-Z_0-9]*\) = \([0-9]*\)@static const int \1 = \2;@g' \
-		-e 's/,//g'
 
 ## libknot API
 ./scripts/gen-cdefs.sh libknot functions <<-EOF
@@ -117,6 +112,8 @@ EOF
 	kr_family_len
 	kr_straddr_socket
 	kr_rrarray_add
+	kr_qflags_set
+	kr_qflags_clear
 # Trust anchors
 	kr_ta_get
 	kr_ta_add
