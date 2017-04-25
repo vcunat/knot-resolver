@@ -1271,11 +1271,11 @@ int kr_resolve_finish(struct kr_request *request, int state)
 	if (answer_finalize(request, state) != 0) {
 		state = KR_STATE_FAIL;
 	}
-	/* Error during procesing, internal failure */
+	/* Error during procesing or an internal failure */
 	if (state != KR_STATE_DONE) {
-		knot_pkt_t *answer = request->answer;
-		if (knot_wire_get_rcode(answer->wire) == KNOT_RCODE_NOERROR) {
-			knot_wire_set_rcode(answer->wire, KNOT_RCODE_SERVFAIL);
+		if (knot_wire_get_rcode(request->answer->wire) == KNOT_RCODE_NOERROR) {
+			answer_fail(request);
+			VERBOSE_MSG(NULL, "internal failure -> SERVFAIL\n");
 		}
 	}
 
