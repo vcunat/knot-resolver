@@ -1,3 +1,9 @@
+- lua: query flag-sets are no longer represented as plain integers.
+  Using bit operations directly on kres.query.* no longer works,
+  but other use cases should work as before.  Still, it is recommended
+  to instead write code like qry.flags.NO_0X20 = true.
+
+
 Knot Resolver 1.2.6 (2017-04-24)
 ================================
 
