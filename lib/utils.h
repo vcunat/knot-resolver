@@ -25,6 +25,7 @@
 #include <libknot/packet/pkt.h>
 #include <libknot/rrset.h>
 #include <libknot/rrtype/rrsig.h>
+#include "contrib/ucw/lib.h"
 #include "lib/generic/map.h"
 #include "lib/generic/array.h"
 #include "lib/defines.h"
@@ -55,6 +56,67 @@ KR_EXPORT void kr_log_verbose(const char *fmt, ...);
 #define WITH_VERBOSE if(__builtin_expect(kr_verbose_status, false))
 #define kr_log_verbose WITH_VERBOSE kr_log_verbose
 
+/** Return 1 if passed zero arguments and 0 otherwise.
+ * Inspiration: http://stackoverflow.com/a/2308651/587396 */
+//*
+#define PP_NARG(zero,nonzero,...) PP_NARG_(dummy,##__VA_ARGS__,PP_RSEQ_N(zero,nonzero))
+#define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
+#define PP_ARG_N(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,\
+	_20,_21,_22,_23,_24,_25,_26,_27,_28,_29,_30,_31,_32,_33,_34,_35,_36,_37,_38,_39,\
+	_40,_41,_42,_43,_44,_45,_46,_47,_48,_49,_50,_51,_52,_53,_54,_55,_56,_57,_58,_59,\
+	_60,_61,_62,_63,N,...) N
+#define PP_RSEQ_N(zero,n) n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,\
+	n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,\
+	n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,n,zero
+//*/
+
+#define EMPTY()
+#define DEFER(id) id EMPTY()
+
+
+#define EVAL0(...) __VA_ARGS__
+#define EVAL(...) EVAL0 (EVAL0 (EVAL0 (__VA_ARGS__)))
+//#define EVAL2(...) EVAL1 (EVAL1 (EVAL1 (__VA_ARGS__)))
+//#define EVAL3(...) EVAL2 (EVAL2 (EVAL2 (__VA_ARGS__)))
+//#define EVAL4(...) EVAL3 (EVAL3 (EVAL3 (__VA_ARGS__)))
+//#define EVAL(...)  EVAL4 (EVAL4 (EVAL4 (__VA_ARGS__)))
+
+
+#define CHECK_ALL(cond1, ...) \
+	((!(cond1)) ? kr_report_error(),false \
+	 	    : PP_NARG(true, CHECK_ALL(__VA_ARGS__), ##__VA_ARGS__))
+	
+
+//static inline bool CHECK_ALL_ /**/ (void) { return true; }
+/*
+
+#define SWITCH01(cond, then_, else_) SWITCH##cond (then_, else_)
+#define SWITCH0(then_, else_) then_
+#define SWITCH1(then_, else_) else_
+*/
+
+#define FOO(arg) arg
+
+
+KR_EXPORT void kr_report_error(void);
+//check_all_impl({__VA_ARGS__}, #__VA_ARGS__)
+static inline bool check_all_impl(size_t len, bool conds[len], const char *cond_strs)
+{
+	static const int TTT = 0;
+	#define TTT 1+TTT
+	static const int p = EVAL(TTT);
+	static_assert(p == 1, "error");
+
+	EVAL(CHECK_ALL(true));
+
+	for (size_t i = 0; i < len; ++i) {
+		if (unlikely(!conds[i])) {
+			kr_log_error("TODO: %s\n", cond_strs);
+			return false;
+		}
+	}
+	return true;
+}
 
 /* C11 compatibility, but without any implementation so far. */
 #ifndef static_assert
@@ -266,7 +328,7 @@ char *kr_module_call(struct kr_context *ctx, const char *module, const char *pro
 /** Return the (covered) type of an nonempty RRset. */
 static inline uint16_t kr_rrset_type_maysig(const knot_rrset_t *rr)
 {
-	assert(rr && rr->rrs.rr_count && rr->rrs.data);
+	//if (!CHECK_ALL(rr && rr->rrs.rr_count && rr->rrs.data)) abort();
 	uint16_t type = rr->type;
 	if (type == KNOT_RRTYPE_RRSIG)
 		type = knot_rrsig_type_covered(&rr->rrs, 0);
