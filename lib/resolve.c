@@ -646,9 +646,14 @@ static int query_finalize(struct kr_request *request, struct kr_query *qry, knot
 					knot_wire_set_cd(pkt->wire);
 				}
 			/* Full resolution (ask for +cd and +do) */
-			} else if (qry->flags & QUERY_DNSSEC_WANT) {
-				knot_edns_set_do(pkt->opt_rr);
-				knot_wire_set_cd(pkt->wire);
+			} else {
+				if (qry->flags & QUERY_DNSSEC_WANT) {
+					knot_edns_set_do(pkt->opt_rr);
+					knot_wire_set_cd(pkt->wire);
+				}
+				if (qry->flags & QUERY_FORWARD) {
+					knot_wire_set_rd(pkt->wire);
+				}
 			}
 			ret = edns_put(pkt);
 		}
@@ -1125,7 +1130,7 @@ ns_election:
 		return KR_STATE_FAIL;
 	}
 
-	const bool retry = (qry->flags & (QUERY_TCP|QUERY_STUB|QUERY_BADCOOKIE_AGAIN));
+	const bool retry = (qry->flags & (QUERY_TCP|QUERY_STUB|QUERY_FORWARD|QUERY_BADCOOKIE_AGAIN));
 	if (qry->flags & (QUERY_AWAIT_IPV4|QUERY_AWAIT_IPV6)) {
 		kr_nsrep_elect_addr(qry, request->ctx);
 	} else if (!qry->ns.name || !retry) { /* Keep NS when requerying/stub/badcookie. */
