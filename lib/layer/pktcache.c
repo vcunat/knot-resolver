@@ -232,6 +232,10 @@ static int pktcache_stash(kr_layer_t *ctx, knot_pkt_t *pkt)
 	if (!(is_eligible || is_negative || (qry->flags & QUERY_DNSSEC_WEXPAND))) {
 		return ctx->state;
 	}
+	if ((qry->flags & QUERY_FORWARD) && !(qry->flags & QUERY_RESOLVED)) {
+		/* After forward_retry() we can't trust the security of this. */
+		return ctx->state;
+	}
 	uint32_t ttl = packet_ttl(pkt, is_negative);
 	if (ttl == 0) {
 		return ctx->state; /* No useable TTL, can't cache this. */

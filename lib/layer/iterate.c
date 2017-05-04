@@ -264,7 +264,10 @@ static int update_cut(knot_pkt_t *pkt, const knot_rrset_t *rr,
 		state = KR_STATE_DONE;
 	}
 
-	/* Fetch glue for each NS */
+	/* Fetch glue for each NS, unless forwarding. */
+	if (qry->flags & QUERY_FORWARD) {
+		return state;
+	}
 	for (unsigned i = 0; i < rr->rrs.rr_count; ++i) {
 		const knot_dname_t *ns_name = knot_ns_name(&rr->rrs, i);
 		int glue_records = has_glue(pkt, ns_name);
@@ -357,7 +360,11 @@ static int process_authority(knot_pkt_t *pkt, struct kr_request *req)
 	assert(!(qry->flags & QUERY_STUB));
 
 	int result = KR_STATE_CONSUME;
-	const knot_pktsection_t *ns = knot_pkt_section(pkt, KNOT_AUTHORITY);
+	const knot_section_t ns_section = (qry->flags & QUERY_FORWARD)
+		/* FORWARD: the NS we asked for are in ANSWER section instead. */
+		? KNOT_ANSWER
+		: KNOT_AUTHORITY;
+	const knot_pktsection_t *ns = knot_pkt_section(pkt, ns_section);
 
 #ifdef STRICT_MODE
 	/* AA, terminate resolution chain. */
@@ -594,6 +601,7 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 	bool is_final = (query->parent == NULL);
 	int pkt_class = kr_response_classify(pkt);
 	if (!knot_dname_is_equal(knot_pkt_qname(pkt), query->sname) &&
+	    !(query->flags & QUERY_FORWARD) &&
 	    (pkt_class & (PKT_NOERROR|PKT_NXDOMAIN|PKT_REFUSED|PKT_NODATA))) {
 		VERBOSE_MSG("<= found cut, retrying with non-minimized name\n");
 		query->flags |= QUERY_NO_MINIMIZE;

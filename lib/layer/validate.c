@@ -364,6 +364,9 @@ static int update_delegation(struct kr_request *req, struct kr_query *qry, knot_
 			}
 		}
 
+		if (ret == kr_error(EINVAL) && (qry->flags & QUERY_FORWARD)) {
+			ret = DNSSEC_NOT_FOUND; /* TODO: hacky */
+		}
 		if (!knot_wire_get_aa(answer->wire) &&
 		    qry->stype != KNOT_RRTYPE_DS &&
 		    ret == DNSSEC_NOT_FOUND) {
@@ -415,12 +418,35 @@ static const knot_dname_t *signature_authority(struct kr_request *req)
 	return signer_name;
 }
 
+/** Missing DNSSEC data when forwarding -> try to prove the cut is insecure. */
+static int forward_retry(struct kr_request *req)
+{
+	struct kr_query *qry = req->current_query;
+	if (!(qry->flags & QUERY_ALWAYS_CUT)) {
+		qry->flags |= QUERY_ALWAYS_CUT;
+		qry->flags &= ~QUERY_RESOLVED;
+		qry->flags &= ~QUERY_NO_MINIMIZE;
+		VERBOSE_MSG(qry, "   retrying with cut tracking to confirm insecure status\n");
+		/* We retry even the end answer, so avoid duplictes. TODO:improve */
+		kr_ranked_rrarray_set_wire(&req->answ_selected, false, qry->uid, false);
+		kr_ranked_rrarray_set_wire(&req->auth_selected, false, qry->uid, false);
+		return KR_STATE_PRODUCE;
+	} else {
+		VERBOSE_MSG(qry, "   panic!\n"); // FIXME
+		return KR_STATE_FAIL;
+	}
+}
+
 static int rrsig_not_found(kr_layer_t *ctx, const knot_rrset_t *rr)
 {
 	struct kr_request *req = ctx->req;
 	struct kr_query *qry = req->current_query;
 
 	VERBOSE_MSG(qry, ">< no valid RRSIGs found\n");
+	if (qry->flags & QUERY_FORWARD) {
+		return forward_retry(req);
+	}
+
 	struct kr_zonecut *cut = &qry->zone_cut;
 	const knot_dname_t *cut_name_start = qry->zone_cut.name;
 	bool use_cut = true;
@@ -737,6 +763,8 @@ static int validate(kr_layer_t *ctx, knot_pkt_t *pkt)
 					 * we must continue, validate NSEC\NSEC3 and
 					 * call update_parent_keys() to mark
 					 * parent queries as insecured */
+				} else if (qry->flags & QUERY_FORWARD) {
+					return forward_retry(req);
 				} else {
 					VERBOSE_MSG(qry, "<= bad NODATA proof\n");
 					qry->flags |= QUERY_DNSSEC_BOGUS;
