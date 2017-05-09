@@ -646,6 +646,16 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 		}
 		next->flags |= QUERY_AWAIT_CUT;
 
+		if (!query->parent && (query->flags & QUERY_FORWARD)) {
+			/* In this case rplan_push couldn't copy NS addresses. */
+			next->flags |= QUERY_FORWARD;
+			int err = kr_nsrep_copy_set(&next->ns, &query->ns);
+			if (err) {
+				assert(false);
+				return KR_STATE_FAIL;
+			}
+		}
+
 		/* Want DNSSEC if and only if it's posible to secure
 		 * this name (i.e. iff it is covered by a TA) */
 		if (kr_ta_covers_qry(req->ctx, cname, query->stype)) {
