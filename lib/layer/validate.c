@@ -422,7 +422,7 @@ static const knot_dname_t *signature_authority(struct kr_request *req)
 static int forward_retry(struct kr_request *req)
 {
 	struct kr_query *qry = req->current_query;
-	if (!(qry->flags & QUERY_ALWAYS_CUT)) {
+	if ((qry->flags & QUERY_NO_MINIMIZE)) {
 		qry->flags |= QUERY_ALWAYS_CUT;
 		qry->flags &= ~QUERY_RESOLVED;
 		qry->flags &= ~QUERY_NO_MINIMIZE;

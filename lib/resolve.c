@@ -164,7 +164,8 @@ static int invalidate_ns(struct kr_rplan *rplan, struct kr_query *qry)
  */
 static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct kr_cache *cache, uint32_t timestamp)
 {
-	if (qry->flags & QUERY_NO_MINIMIZE) {
+	if ((qry->flags & QUERY_NO_MINIMIZE) || (qry->flags & QUERY_FORWARD)) {
+		/* forwarding uses minimization to track every zone cut */
 		return;
 	}
 
@@ -186,6 +187,7 @@ static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct k
 		if (ret == 0) { /* Either NXDOMAIN or NODATA, start here. */
 			/* @todo We could stop resolution here for NXDOMAIN, but we can't because of broken CDNs */
 			qry->flags |= QUERY_NO_MINIMIZE;
+			/* it's safe to run kr_make_query() again due to the flag */
 			kr_make_query(qry, pkt);
 			return;
 		}
@@ -233,7 +235,7 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 		if (ret != 0) {
 			return KR_STATE_FAIL;
 		}
-		VERBOSE_MSG(qry, "=> using root hints\n");
+		VERBOSE_MSG(qry, "=> using root hints\n"); // TODO: perhaps confusing when forwarding
 		qry->flags &= ~QUERY_AWAIT_CUT;
 		kr_zonecut_deinit(&cut_found);
 		return KR_STATE_DONE;
@@ -970,6 +972,7 @@ static int trust_chain_check(struct kr_request *request, struct kr_query *qry)
 	const bool is_dnskey_subreq = kr_rplan_satisfies(qry, ta_name, KNOT_CLASS_IN, KNOT_RRTYPE_DNSKEY);
 	const bool refetch_key = has_ta && (!qry->zone_cut.key || !knot_dname_is_equal(ta_name, qry->zone_cut.key->owner));
 	if (want_secured && refetch_key && !is_dnskey_subreq) {
+		// FIXME: forwarding?
 		struct kr_query *next = zone_cut_subreq(rplan, qry, ta_name, KNOT_RRTYPE_DNSKEY);
 		if (!next) {
 			return KR_STATE_FAIL;
@@ -997,7 +1000,7 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 	/* The query wasn't resolved from cache,
 	 * now it's the time to look up closest zone cut from cache. */
 	struct kr_cache *cache = &request->ctx->cache;
-	if (!kr_cache_is_open(cache)) {
+	if (!kr_cache_is_open(cache) && !(qry->flags & QUERY_FORWARD)) {
 		int ret = kr_zonecut_set_sbelt(request->ctx, &qry->zone_cut);
 		if (ret != 0) {
 			return KR_STATE_FAIL;
@@ -1007,6 +1010,7 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 		return KR_STATE_DONE;
 	}
 
+	const int zone_cut_labels = knot_dname_labels(qry->zone_cut.name, NULL);
 	const knot_dname_t *requested_name = qry->sname;
 	/* If at/subdomain of parent zone cut, start from its encloser.
 	 * This is for case when we get to a dead end
@@ -1032,7 +1036,8 @@ static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot
 	} while (state == KR_STATE_CONSUME);
 
 	/* Update minimized QNAME if zone cut changed */
-	if (qry->zone_cut.name[0] != '\0' && !(qry->flags & QUERY_NO_MINIMIZE)) {
+	if (!(qry->flags & QUERY_NO_MINIMIZE)
+	    && zone_cut_labels != knot_dname_labels(qry->zone_cut.name, NULL)) {
 		if (kr_make_query(qry, packet) != 0) {
 			return KR_STATE_FAIL;
 		}

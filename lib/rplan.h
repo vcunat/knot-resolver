@@ -89,6 +89,8 @@ struct kr_query {
 	struct kr_nsrep ns;
 	struct kr_layer_pickle *deferred;
 	uint32_t uid; /**< Query iteration number, unique within the kr_rplan. */
+	/** @internals to kr_make_query */
+	int8_t min_labels, min_cutlabels;
 };
 
 /** @cond internal Array of queries. */

@@ -305,8 +305,12 @@ int kr_zonecut_set_sbelt(struct kr_context *ctx, struct kr_zonecut *cut)
 	map_walk(&cut->nsset, free_addr_set, cut->pool);
 	map_clear(&cut->nsset);
 
+	int ret = kr_ok();
+	if (ctx->options & QUERY_FORWARD) {
+		return ret;
+	}
+
 	/* Copy root hints from resolution context. */
-	int ret = 0;
 	if (ctx->root_hints.nsset.root) {
 		ret = kr_zonecut_copy(cut, &ctx->root_hints);
 	} else {

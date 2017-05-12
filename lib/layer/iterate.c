@@ -49,28 +49,54 @@
 /* Iterator often walks through packet section, this is an abstraction. */
 typedef int (*rr_callback_t)(const knot_rrset_t *, unsigned, struct kr_request *);
 
-/** Return minimized QNAME/QTYPE for current zone cut. */
-static const knot_dname_t *minimized_qname(struct kr_query *query, uint16_t *qtype)
+/** Return minimized QNAME and QTYPE for the current zone cut.
+ * @param advance whether to make another step */
+static const knot_dname_t *minimized_qname(struct kr_query *query, uint16_t *qtype,
+					   bool advance)
 {
-	/* Minimization disabled. */
+	if (!query || !qtype) {
+		assert(false);
+		return NULL;
+	}
 	const knot_dname_t *qname = query->sname;
-	if (qname[0] == '\0' || query->flags & (QUERY_NO_MINIMIZE|QUERY_STUB)) {
+	if (query->flags & (QUERY_NO_MINIMIZE|QUERY_STUB)) {
+		/* Minimization disabled. */
+		query->min_cutlabels = -1;
+		query->min_labels = -1;
 		return qname;
 	}
 
-	/* Minimize name to contain current zone cut + 1 label. */
-	int cut_labels = knot_dname_labels(query->zone_cut.name, NULL);
+	/* Perform steps to update query->min_* values, if required. */
+	if (advance) {
+		int cut_labels = knot_dname_labels(query->zone_cut.name, NULL);
+		if (cut_labels != query->min_cutlabels) {
+			/* The cut has changed -> start anew from it.
+			 * This also occurs naturally after a referral. */
+			query->min_cutlabels = cut_labels;
+			query->min_labels = cut_labels + 1;
+		} else {
+			++query->min_labels;
+		}
+	}
+
 	int qname_labels = knot_dname_labels(qname, NULL);
-	while(qname[0] && qname_labels > cut_labels + 1) {
+	if (query->min_labels > qname_labels) {
+		/* We have to resort to non-minimized query now.
+		 * Note the strict inequivalence above: now we even ask NS query
+		 * for the final name to guard against it being a zone cut.
+		 */
+		if (advance) { /* avoid overflow if repeating */
+			query->min_labels = qname_labels + 1;
+		}
+		*qtype = query->stype;
+		return qname;
+	}
+
+	/* Minimized query */
+	*qtype = KNOT_RRTYPE_NS;
+	for (int i = 0; i < qname_labels - query->min_labels; ++i) {
 		qname = knot_wire_next_label(qname, NULL);
-		qname_labels -= 1;
 	}
-
-	/* Hide QTYPE if minimized. */
-	if (qname != query->sname) {
-		*qtype = KNOT_RRTYPE_NS;
-	}
-
 	return qname;
 }
 
@@ -78,7 +104,7 @@ static const knot_dname_t *minimized_qname(struct kr_query *query, uint16_t *qty
 static bool is_paired_to_query(const knot_pkt_t *answer, struct kr_query *query)
 {
 	uint16_t qtype = query->stype;
-	const knot_dname_t *qname = minimized_qname(query, &qtype);
+	const knot_dname_t *qname = minimized_qname(query, &qtype, false);
 
 	return query->id      == knot_wire_get_id(answer->wire) &&
 	       knot_wire_get_qdcount(answer->wire) > 0 &&
@@ -624,8 +650,12 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 	}
 	/* Make sure that this is an authoritative answer (even with AA=0) for other layers */
 	knot_wire_set_aa(pkt->wire);
-	/* Either way it resolves current query. */
-	query->flags |= QUERY_RESOLVED;
+	/* Either way it resolves current query iff we asked for the final query.
+	 * TODO: improve this somehow? */
+	if (knot_pkt_qtype(pkt) == query->stype
+	    && knot_dname_is_equal(query->sname, knot_pkt_qname(pkt))) {
+		query->flags |= QUERY_RESOLVED;
+	}
 	/* Follow canonical name as next SNAME. */
 	if (!knot_dname_is_equal(cname, query->sname)) {
 		/* Check if target record has been already copied */
@@ -793,7 +823,7 @@ int kr_make_query(struct kr_query *query, knot_pkt_t *pkt)
 {
 	/* Minimize QNAME (if possible). */
 	uint16_t qtype = query->stype;
-	const knot_dname_t *qname = minimized_qname(query, &qtype);
+	const knot_dname_t *qname = minimized_qname(query, &qtype, true);
 
 	/* Form a query for the authoritative. */
 	knot_pkt_clear(pkt);
@@ -844,7 +874,10 @@ static int resolve_badmsg(knot_pkt_t *pkt, struct kr_request *req, struct kr_que
 	/* Work around broken auths/load balancers */
 	if (query->flags & QUERY_SAFEMODE) {
 		return resolve_error(pkt, req);
-	} else if (query->flags & QUERY_NO_MINIMIZE) {
+	} else if ((query->flags & QUERY_NO_MINIMIZE)
+		   || (query->flags & QUERY_FORWARD)) {
+		/* ^^ don't try NO_MINIMIZE if forwarding, as minimization
+		 * is a fallback state for validator already */
 		query->flags |= QUERY_SAFEMODE;
 		return KR_STATE_DONE;
 	} else {
@@ -928,7 +961,10 @@ static int resolve(kr_layer_t *ctx, knot_pkt_t *pkt)
 			query->fails = 0; /* Reset per-query counter. */
 			return resolve_error(pkt, req);
 		} else {
-			query->flags |= QUERY_NO_MINIMIZE; /* Drop minimisation as a safe-guard. */
+			if (!(query->flags & QUERY_FORWARD)) {
+				/* Drop minimisation as a safe-guard. */
+				query->flags |= QUERY_NO_MINIMIZE;
+			}
 			return KR_STATE_CONSUME;
 		}
 	}
