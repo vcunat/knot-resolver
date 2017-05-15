@@ -458,7 +458,8 @@ static void finalize_answer(knot_pkt_t *pkt, struct kr_query *qry, struct kr_req
 	knot_wire_set_rcode(answer->wire, knot_wire_get_rcode(pkt->wire));
 }
 
-static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, const knot_dname_t **cname_ret)
+static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral,
+			bool is_minimized, const knot_dname_t **cname_ret)
 {
 	struct kr_query *query = req->current_query;
 	assert(!(query->flags & QUERY_STUB));
@@ -467,7 +468,6 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 	const knot_dname_t *cname = NULL;
 	const knot_dname_t *pending_cname = query->sname;
 	unsigned cname_chain_len = 0;
-	bool is_final = (query->parent == NULL);
 	uint32_t iter_count = 0;
 	bool strict_mode = (query->flags & QUERY_STRICT);
 	do {
@@ -489,16 +489,14 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 
 			/* Process records matching current SNAME */
 			int state = KR_STATE_FAIL;
-			bool to_wire = false;
-			if (is_final) {
-				/* if not referral, mark record to be written to final answer */
-				to_wire = !referral;
-			} else {
+			if (query->parent) {
 				state = update_nsaddr(rr, query->parent);
 				if (state == KR_STATE_FAIL) {
 					return state;
 				}
 			}
+			/* If it's the final answer, mark records to be put into answer. */
+			bool to_wire = !query->parent && !is_minimized && !referral;
 			uint8_t rank = get_initial_rank(rr, query, true, referral);
 			state = kr_ranked_rrarray_add(&req->answ_selected, rr,
 						      rank, to_wire, query->uid, &req->pool);
@@ -556,12 +554,14 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 
 static int process_referral_answer(knot_pkt_t *pkt, struct kr_request *req)
 {
+	struct kr_query *query = req->current_query;
+	const bool is_minimized = knot_pkt_qtype(pkt) != query->stype
+	    || !knot_dname_is_equal(query->sname, knot_pkt_qname(pkt));
 	const knot_dname_t *cname = NULL;
-	int state = unroll_cname(pkt, req, true, &cname);
+	int state = unroll_cname(pkt, req, true, is_minimized, &cname);
 	if (state != kr_ok()) {
 		return KR_STATE_FAIL;
 	}
-	struct kr_query *query = req->current_query;
 	if (!(query->flags & QUERY_CACHED)) {
 		/* If not cached (i.e. got from upstream)
 		 * make sure that this is not an authoritative answer
@@ -642,9 +642,11 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 		}
 	}
 
-	const knot_dname_t *cname = NULL;
+	const bool is_minimized = knot_pkt_qtype(pkt) != query->stype
+	    || !knot_dname_is_equal(query->sname, knot_pkt_qname(pkt));
 	/* Process answer type */
-	int state = unroll_cname(pkt, req, false, &cname);
+	const knot_dname_t *cname = NULL;
+	int state = unroll_cname(pkt, req, false, is_minimized, &cname);
 	if (state != kr_ok()) {
 		return state;
 	}
@@ -652,8 +654,7 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 	knot_wire_set_aa(pkt->wire);
 	/* Either way it resolves current query iff we asked for the final query.
 	 * TODO: improve this somehow? */
-	if (knot_pkt_qtype(pkt) == query->stype
-	    && knot_dname_is_equal(query->sname, knot_pkt_qname(pkt))) {
+	if (!is_minimized) {
 		query->flags |= QUERY_RESOLVED;
 	}
 	/* Follow canonical name as next SNAME. */
@@ -705,7 +706,7 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 		if (state != kr_ok()) {
 			return KR_STATE_FAIL;
 		}
-	} else if (!query->parent) {
+	} else if (!query->parent && !is_minimized) {
 		/* Answer for initial query */
 		const bool to_wire = ((pkt_class & (PKT_NXDOMAIN|PKT_NODATA)) != 0);
 		state = pick_authority(pkt, req, to_wire);
