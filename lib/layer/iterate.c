@@ -80,8 +80,9 @@ static const knot_dname_t *minimized_qname(struct kr_query *query, uint16_t *qty
 	}
 
 	int qname_labels = knot_dname_labels(qname, NULL);
-	if (query->min_labels > qname_labels) {
-		/* We have to resort to non-minimized query now.
+	if (query->min_labels > qname_labels
+	    || (query->min_labels == qname_labels && !(query->flags & QUERY_FORWARD))) {
+		/* We have to resort to non-minimized query now. TODO
 		 * Note the strict inequivalence above: now we even ask NS query
 		 * for the final name to guard against it being a zone cut.
 		 */
