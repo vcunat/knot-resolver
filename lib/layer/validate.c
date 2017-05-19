@@ -554,17 +554,7 @@ static int check_signer(kr_layer_t *ctx, knot_pkt_t *pkt)
 				 * Let the validation logic ask about RRSIG. */
 				return KR_STATE_DONE;
 			}
-			/* Ask parent for DS
-			 * to prove transition to INSECURE. */
-			const uint16_t qtype = knot_pkt_qtype(pkt);
-			const knot_dname_t *qname = knot_pkt_qname(pkt);
-			if (qtype == KNOT_RRTYPE_NS &&
-			    knot_dname_is_sub(qname, qry->zone_cut.name)) {
-				/* Server is authoritative
-				 * for both parent and child,
-				 * and child zone is not signed. */
-				qry->zone_cut.name = knot_dname_copy(qname, &req->pool);
-			}
+			/* Ask parent for DS to prove transition to INSECURE. */
 		} else if (knot_dname_is_sub(signer, qry->zone_cut.name)) {
 			/* Key signer is below current cut, advance and refetch keys. */
 			qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
