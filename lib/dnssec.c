@@ -249,6 +249,7 @@ int kr_dnskeys_trusted(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *ta)
 	 * The supplied DS record has been authenticated.
 	 * It has been validated or is part of a configured trust anchor.
 	 */
+	bool all_unknown_algos = true;
 	for (uint16_t i = 0; i < keys->rrs.rr_count; ++i) {
 		/* RFC4035 5.3.1, bullet 8 */ /* ZSK */
 		const knot_rdata_t *krr = knot_rdataset_at(&keys->rrs, i);
@@ -258,10 +259,19 @@ int kr_dnskeys_trusted(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *ta)
 		}
 		
 		struct dseckey *key;
-		if (kr_dnssec_key_from_rdata(&key, keys->owner, key_data, knot_rdata_rdlen(krr)) != 0) {
+		int err = kr_dnssec_key_from_rdata(&key, keys->owner, key_data,
+						   knot_rdata_rdlen(krr));
+		if (err) {
+			if (err != DNSSEC_INVALID_KEY_ALGORITHM) {
+				all_unknown_algos = false;
+			}
 			continue;
 		}
-		if (kr_authenticate_referral(ta, (dnssec_key_t *) key) != 0) {
+		err = kr_authenticate_referral(ta, (dnssec_key_t *) key);
+		if (err != DNSSEC_INVALID_DS_ALGORITHM) {
+			all_unknown_algos = false;
+		}
+		if (err) {
 			kr_dnssec_key_free(&key);
 			continue;
 		}
@@ -273,9 +283,14 @@ int kr_dnskeys_trusted(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *ta)
 		assert (vctx->result == 0);
 		return vctx->result;
 	}
+
 	/* No useable key found */
-	vctx->result = kr_error(ENOENT);
-	return vctx->result;
+	if (all_unknown_algos && keys->rrs.rr_count > 0) {
+		/* See RFC4035 5.2, third paragraph from the bottom and the last one. */
+		return vctx->result = kr_error(DNSSEC_INVALID_KEY_ALGORITHM);
+	} else {
+		return vctx->result = kr_error(ENOENT);
+	}
 }
 
 bool kr_dnssec_key_zsk(const uint8_t *dnskey_rdata)
@@ -363,7 +378,7 @@ int kr_dnssec_key_from_rdata(struct dseckey **key, const knot_dname_t *kown, con
 	ret = dnssec_key_set_rdata(new_key, &binary_key);
 	if (ret != DNSSEC_EOK) {
 		dnssec_key_free(new_key);
-		return kr_error(ENOMEM);
+		return kr_error(ret);
 	}
 	if (kown) {
 		ret = dnssec_key_set_dname(new_key, kown);
