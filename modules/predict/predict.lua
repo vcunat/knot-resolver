@@ -13,7 +13,12 @@ local predict = {
 	log = {},
 }
 
--- Calculate current epoch (which window fits current time)
+local function log_verbose(text, ...)
+	if not verbose() then return end
+	log('[     ][pred] ' .. text, ...)
+end
+
+-- Calculate current epoch number (in [1..period], according to the current time)
 local function current_epoch()
 	if not predict.period or predict.period <= 1 then return nil end
 	return (os.date('%H')*(60/predict.window) +
@@ -60,14 +65,14 @@ local function enqueue(queries)
 			queued = queued + 1
 		end
 	end
-	return queued	
+	return queued
 end
 
--- Enqueue queries from same format as predict.queue or predict.log 
+-- Enqueue queries from same format as predict.queue or predict.log
 local function enqueue_from_log(current)
 	if not current then return 0 end
 	queued = 0
-	for key, val in pairs(current) do 
+	for key, val in pairs(current) do
 		if val and not predict.queue[key] then
 			predict.queue[key] = val
 			queued = queued + 1
@@ -84,9 +89,10 @@ function predict.prefetch()
 end
 
 -- Sample current epoch, return number of sampled queries
+-- i.e. add stats.frequent() into predict.log[epoch_now]
 function predict.sample(epoch_now)
-	if not epoch_now then return 0, 0 end
-	local current = predict.log[epoch_now] or {}	
+	if not epoch_now then return 0 end
+	local current = predict.log[epoch_now] or {}
 	local queries = stats.frequent()
 	stats.clear_frequent()
 	local nr_samples = #queries
@@ -126,23 +132,27 @@ function predict.process(ev)
 	local epoch_now = current_epoch()
 	local nr_queued = 0
 
-	-- End of epoch 
+	-- End of epoch
 	if predict.epoch ~= epoch_now then
 		stats['predict.epoch'] = epoch_now
 		predict.epoch = epoch_now
-		-- enqueue records from upcoming epoch	
+		-- enqueue records from upcoming epoch
 		nr_queued = enqueue_from_log(predict.log[epoch_now])
 		-- predict next epoch
 		nr_queued = nr_queued + generate(epoch_now)
 		-- clear log for new epoch
 		predict.log[epoch_now] = {}
+		log_verbose('starting epoch ' .. epoch_now .. ', enqueuing queries: ' .. nr_queued)
 	end
 	
 	-- Sample current epoch
-	local nr_learned = predict.sample(epoch_now)
-	
+	local nr_frequent = predict.sample(epoch_now)
 	-- Prefetch expiring records
-	nr_queued = nr_queued + predict.prefetch()
+	local nr_expiring = predict.prefetch()
+	nr_queued = nr_queued + nr_expiring
+
+	log_verbose('queries collected; frequent: ' .. nr_frequent .. ', expiring: ' .. nr_expiring)
+
 	-- Dispatch predicted queries
 	if nr_queued > 0 then
 		predict.queue_len = predict.queue_len + nr_queued
@@ -153,7 +163,7 @@ function predict.process(ev)
 	end
 	predict.ev_sample = event.after(next_event(), predict.process)
 	stats['predict.queue'] = predict.queue_len
-	stats['predict.learned'] = nr_learned
+	stats['predict.learned'] = nr_frequent
 	collectgarbage()
 end
 
