@@ -21,14 +21,15 @@ end
 -- Calculate current epoch number (in [1..period], according to the current time)
 local function current_epoch()
 	if not predict.period or predict.period <= 1 then return nil end
-	return (os.date('%H')*(60/predict.window) +
-		math.floor(os.date('%M')/predict.window)) % predict.period + 1
+	return math.floor(os.time() / (60 * predict.window))
+			% predict.period + 1
 end
 
--- Calculate next sample with jitter [1-2/5 of window]
+-- Calculate interval to the next sample (in ms)
+-- One sample will take 25-38% of window's time.
 local function next_event()
-	local jitter = (predict.window * minute) / 5;
-	return math.random(jitter, 2 * jitter)
+	local jitter = math.floor(predict.window * minute / 8);
+	return math.random(2 * jitter, 3 * jitter)
 end
 
 -- Resolve queued records and flush the queue
