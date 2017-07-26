@@ -554,20 +554,27 @@ static int answer_padding(struct kr_request *request)
 	return kr_ok();
 }
 
-static int answer_fail(struct kr_request *request)
+static int answer_fail_rcode(struct kr_request *request, uint16_t rcode)
 {
 	knot_pkt_t *answer = request->answer;
 	int ret = kr_pkt_clear_payload(answer);
 	knot_wire_clear_ad(answer->wire);
 	knot_wire_clear_aa(answer->wire);
-	knot_wire_set_rcode(answer->wire, KNOT_RCODE_SERVFAIL);
 	if (ret == 0 && answer->opt_rr) {
 		/* OPT in SERVFAIL response is still useful for cookies/additional info. */
 		knot_pkt_begin(answer, KNOT_ADDITIONAL);
-		answer_padding(request); /* Ignore failed padding in SERVFAIL answer. */
+		answer_padding(request); /* Ignore failed padding in failed answer. */
 		ret = edns_put(answer);
 	}
+	if (ret) {
+		rcode = KNOT_RCODE_SERVFAIL;
+	}
+	knot_wire_set_rcode(answer->wire, rcode);
 	return ret;
+}
+inline static int answer_fail(struct kr_request *request)
+{
+	return answer_fail_rcode(request, KNOT_RCODE_SERVFAIL);
 }
 
 static int answer_finalize(struct kr_request *request, int state)
@@ -722,12 +729,16 @@ int kr_resolve_begin(struct kr_request *request, struct kr_context *ctx, knot_pk
 
 static int resolve_query(struct kr_request *request, const knot_pkt_t *packet)
 {
+	VERBOSE_MSG(NULL, "kr_resolve_query starts\n");
 	struct kr_rplan *rplan = &request->rplan;
 	const knot_dname_t *qname = knot_pkt_qname(packet);
 	uint16_t qclass = knot_pkt_qclass(packet);
 	uint16_t qtype = knot_pkt_qtype(packet);
 	bool cd_is_set = knot_wire_get_cd(packet->wire);
 	struct kr_query *qry = NULL;
+
+	answer_fail_rcode(request, KNOT_RCODE_NOTIMPL);
+	return KR_STATE_DONE;
 
 	if (qname != NULL) {
 		qry = kr_rplan_push(rplan, NULL, qname, qclass, qtype);
@@ -740,6 +751,7 @@ static int resolve_query(struct kr_request *request, const knot_pkt_t *packet)
 	if (!qry) {
 		return KR_STATE_FAIL;
 	}
+	VERBOSE_MSG(NULL, "kr_resolve_query AWAIT_CUT\n");
 
 	/* Deferred zone cut lookup for this query. */
 	qry->flags |= QUERY_AWAIT_CUT;
@@ -858,6 +870,7 @@ static void update_nslist_score(struct kr_request *request, struct kr_query *qry
 
 int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, knot_pkt_t *packet)
 {
+	VERBOSE_MSG(NULL, "kr_resolve_consume starts\n");
 	struct kr_rplan *rplan = &request->rplan;
 
 	/* Empty resolution plan, push packet as the new query */

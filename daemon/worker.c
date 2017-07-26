@@ -834,6 +834,7 @@ static int parse_packet(knot_pkt_t *query)
 	}
 
 	/* Parse query packet. */
+	//if (knot_wire_get_opcode(query->wire) != 
 	int ret = knot_pkt_parse(query, 0);
 	if (ret != KNOT_EOK) {
 		return kr_error(EPROTO); /* Ignore malformed query. */
@@ -871,11 +872,13 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle, knot_pkt_t *ms
 		if (!task) {
 			return kr_error(ENOMEM);
 		}
+		VERBOSE_MSG(NULL, "task_create OK\n");
 		ret = qr_task_start(task, msg);
 		if (ret != 0) {
 			qr_task_free(task);
 			return kr_error(ENOMEM);
 		}
+		VERBOSE_MSG(NULL, "task_start OK\n");
 	} else {
 		task = session->tasks.len > 0 ? array_tail(session->tasks) : NULL;
 	}

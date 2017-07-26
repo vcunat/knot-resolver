@@ -113,6 +113,7 @@ static struct kr_query *kr_rplan_push_query(struct kr_rplan *rplan,
                                             struct kr_query *parent,
                                             const knot_dname_t *name)
 {
+	VERBOSE_MSG(parent, "rplan_push starts\n");
 	if (rplan == NULL) {
 		return NULL;
 	}
