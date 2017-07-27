@@ -38,7 +38,7 @@ struct kr_qflags {
 	bool SAFEMODE : 1;       /**< Don't use fancy stuff (EDNS, 0x20, ...) */
 	bool CACHED : 1;         /**< Query response is cached. */
 	bool NO_CACHE : 1;       /**< No cache for lookup; exception: finding NSs and subqueries. */
-	bool EXPIRING : 1;       /**< Query response is cached, but expiring. */
+	bool EXPIRING : 1;       /**< Response is cached but "expiring"; for predict module. */
 	bool ALLOW_LOCAL : 1;    /**< Allow queries to local or private address ranges. */
 	bool DNSSEC_WANT : 1;    /**< Want DNSSEC secured answer; exception: +cd,
 				  * i.e. knot_wire_set_cd(request->answer->wire). */
