@@ -37,6 +37,7 @@
 #include "daemon/engine.h"
 #include "daemon/bindings.h"
 #include "daemon/tls.h"
+#include "lib/dnssec/ta.h"
 
 /* We can fork early on Linux 3.9+ and do SO_REUSEPORT for better performance. */
 #if defined(UV_VERSION_HEX) && defined(SO_REUSEPORT) && defined(__linux__)
@@ -670,6 +671,15 @@ int main(int argc, char **argv)
 		ret = EXIT_FAILURE;
 		goto cleanup;
 	}
+
+	#ifdef KEYFILE_DEFAULT
+	if (!keyfile &&
+	    (kr_ta_get(&engine.resolver.trust_anchors, "\0") == NULL &&
+	    access(KEYFILE_DEFAULT, R_OK) == 0) {
+		keyfile=KEYFILE_DEFAULT;
+		keyfile_unmanaged = 1;
+	}
+	#endif
 
 	if (keyfile) {
 		auto_free char *cmd = afmt("trust_anchors.config('%s',%s)", keyfile, keyfile_unmanaged?"true":"nil");
