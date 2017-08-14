@@ -268,6 +268,9 @@ local function keyset_read(path)
 	-- First load the regular entries, trusting them.
 	local zonefile = require('zonefile')
 	local tas = zonefile.file(path)
+	if not tas then
+		return tas
+	end
 	keyset_parse_comments(tas, key_state.Valid)
 
 	-- The untrusted keys are commented out but important to load.
@@ -371,6 +374,13 @@ end
 local add_file = function (path, unmanaged)
 	-- Bootstrap if requested and keyfile doesn't exist
 
+	if not unmanaged then
+		if not io.open(path .. '.lock', 'w') then
+			error("[ ta ] ERROR: write access needed to keyfile dir '"..path.."'")
+		end
+		os.remove(path .. ".lock")
+	end
+
 	if not unmanaged and not io.open(path, 'r') then
 		local tas, msg = bootstrap(trust_anchors.bootstrap_url, trust_anchors.bootstrap_ca)
 		if not tas then
@@ -397,10 +407,10 @@ local add_file = function (path, unmanaged)
 
 	-- Parse the file and check its sanity
 	local keyset = keyset_read(path)
-	if not unmanaged then keyset.filename = path end
-	if not keyset[1] then
+	if not keyset or not keyset[1] then
 		error('[ ta ] ERROR: failed to read anchors from path ' .. path)
 	end
+	if not unmanaged then keyset.filename = path end
 	local owner = keyset[1].owner
 	for i, ta in ipairs(keyset) do
 		if ta.owner ~= owner then
