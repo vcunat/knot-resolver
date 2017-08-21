@@ -67,7 +67,7 @@ daemon/lua/kres.lua: daemon/lua/kres.lua.in
 	@$(call quiet,SED,$<) -e "s|@KNOT_RRSET_TXT_DUMP@|$(KNOT_RRSET_TXT_DUMP)|g" $< > $@
 
 daemon/lua/trust_anchors.lua: daemon/lua/trust_anchors.lua.in
-	@$(call quiet,SED,$<) -e "s|@ETCDIR@|$(ETCDIR)|g" $< > $@
+	@$(call quiet,SED,$<) -e "s|@ETCDIR@|$(ETCDIR)|g;s|@KEYFILE_DEFAULT@|$(KEYFILE_DEFAULT)|g" $< > $@
 
 LIBZSCANNER_COMMENTS := \
 	$(shell pkg-config libzscanner --atleast-version=2.4.2 && echo true || echo false)

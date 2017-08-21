@@ -38,6 +38,3 @@ endif
 ifeq (,$(findstring -fsanitize=address,$(CFLAGS)))
 	BUILD_CFLAGS += -D_FORTIFY_SOURCE=2
 endif
-ifdef KEYFILE_DEFAULT
-	BUILD_CFLAGS += -DKEYFILE_DEFAULT="\"$(KEYFILE_DEFAULT)\""
-endif

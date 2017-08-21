@@ -672,15 +672,6 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
-	#ifdef KEYFILE_DEFAULT
-	if (!keyfile &&
-	    (kr_ta_get(&engine.resolver.trust_anchors, "\0") == NULL &&
-	    access(KEYFILE_DEFAULT, R_OK) == 0) {
-		keyfile=KEYFILE_DEFAULT;
-		keyfile_unmanaged = 1;
-	}
-	#endif
-
 	if (keyfile) {
 		auto_free char *cmd = afmt("trust_anchors.config('%s',%s)", keyfile, keyfile_unmanaged?"true":"nil");
 		if (!cmd) {

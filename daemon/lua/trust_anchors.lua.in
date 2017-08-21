@@ -455,6 +455,7 @@ trust_anchors = {
 
 	bootstrap_url = 'https://data.iana.org/root-anchors/root-anchors.xml',
 	bootstrap_ca = '@ETCDIR@/icann-ca.pem',
+	keyfile_default = '@KEYFILE_DEFAULT@',
 
 	-- Load keys from a file, 5011-managed by default.
 	-- If managed and the file doesn't exist, try bootstrapping the root into it.
