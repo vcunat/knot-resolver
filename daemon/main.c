@@ -347,9 +347,8 @@ static void help(int argc, char *argv[])
 	       " -S, --fd=[fd]          Listen on given fd (handed out by supervisor).\n"
 	       " -T, --tlsfd=[fd]       Listen using TLS on given fd (handed out by supervisor).\n"
 	       " -c, --config=[path]    Config file path (relative to [rundir]) (default: config).\n"
-	       " -k, --keyfile=[path]   File containing trust anchors (DS or DNSKEY).\n"
-	       /// TODO Change help for unmanaged mode
-	       " -K, --keyfile-unmanaged=[path]   File containing trust anchors (DS or DNSKEY).\n"
+	       " -k, --keyfile=[path]   File to keep trust anchors (DS or DNSKEY).\n"
+	       " -K, --keyfile-unmanaged=[path] Load trust anchors from file.\n"
 	       " -m, --moduledir=[path] Override the default module path (" MODULEDIR ").\n"
 	       " -f, --forks=N          Start N forks sharing the configuration.\n"
 	       " -q, --quiet            Quiet output, no prompt in interactive mode.\n"

@@ -24,6 +24,8 @@
 .IR config ]
 .RB [ \-k | \-\-keyfile
 .IR keyfile ]
+.RB [ \-K | \-\-keyfile-unmanaged
+.IR keyfile ]
 .RB [ \-m | \-\-moduledir
 .IR path ]
 .RB [ \-f | \-\-forks
@@ -124,7 +126,11 @@ described in \fIdaemon/README.md\fR.
 Use given for keeping root trust anchors. If the file doesn't exist, it will be
 automatically boostrapped from IANA and warning for you will be issued to check it
 before trusting it. The file contains DNSKEY/DS records in presentation format,
-and is compatible with Unbound or BIND9 root key files.
+and is compatible with Unbound or BIND9 root key files. Kresd needs write access
+to keyfile directory.
+.TP
+.B \-K\fI keyfile\fR, \fB\-\-keyfile-unmanaged=\fI<keyfile>
+Use given as root trust anchors. File is not updated by kresd.
 .TP
 .B \-m\fI path\fR, \fB\-\-moduledir=\fI<path>
 Override the directory that is searched for modules.  Default: @MODULEDIR@
