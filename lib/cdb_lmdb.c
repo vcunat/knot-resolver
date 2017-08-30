@@ -231,17 +231,6 @@ static int cdb_init(knot_db_t **db, struct kr_cdb_opts *opts, knot_mm_t *pool)
 	}
 	memset(env, 0, sizeof(struct lmdb_env));
 
-	/* Clear stale lockfiles. */
-	auto_free char *lockfile = kr_strcatdup(2, opts->path, "/.cachelock");
-	if (lockfile) {
-		if (unlink(lockfile) == 0) {
-			kr_log_info("[cache] cleared stale lockfile '%s'\n", lockfile);
-		} else if (errno != ENOENT) {
-			kr_log_info("[cache] failed to clear stale lockfile '%s': %s\n", lockfile,
-				    strerror(errno));
-		}
-	}
-
 	/* Open the database. */
 	int ret = cdb_open(env, opts->path, opts->maxsize);
 	if (ret != 0) {
