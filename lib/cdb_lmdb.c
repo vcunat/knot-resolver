@@ -15,13 +15,16 @@
 */
 
 #include <assert.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <lmdb.h>
 
+#include "contrib/ccan/asprintf/asprintf.h"
 #include "contrib/cleanup.h"
 #include "lib/cdb_lmdb.h"
 #include "lib/cache.h"
@@ -302,28 +305,39 @@ static int cdb_clear(knot_db_t *db)
 	auto_free char *mdb_datafile = kr_strcatdup(2, path, "/data.mdb");
 	auto_free char *mdb_lockfile = kr_strcatdup(2, path, "/lock.mdb");
 	auto_free char *lockfile = kr_strcatdup(2, path, "/.cachelock");
-	if (!mdb_datafile || !mdb_lockfile || !lockfile) {
+	auto_free char *file_unique = afmt("%s/.cachelock-%d", path, (int)getpid());
+	if (!mdb_datafile || !mdb_lockfile || !lockfile || !file_unique) {
 		return kr_error(ENOMEM);
 	}
-	ret = link(mdb_lockfile, lockfile);
+	/* Find if we get a lock on lockfile, via file_unique. */
+	ret = open(file_unique, O_CREAT|O_RDONLY, S_IRUSR);
+	if (ret == -1) {
+		return kr_error(errno);
+	}
+	close(ret);
+	ret = link(file_unique, lockfile);
 	if (ret != 0) {
 		int lock_errno = errno;
 		struct stat lock_stat;
-		ret = stat(lockfile, &lock_stat);
+		ret = stat(file_unique, &lock_stat);
 		if (ret != 0) {
+			unlink(file_unique);
 			return kr_error(errno);
 		}
 		if (lock_stat.st_nlink != 2) {
+			unlink(file_unique);
 			return kr_error(lock_errno);
 		}
 	}
+	unlink(file_unique);
+	/* We aquired lockfile.  Now find whether *.mdb are what we have open now. */
 	struct stat old_stat, new_stat;
-	ret = fstat(fd, &new_stat);
+	ret = stat(mdb_datafile, &old_stat);
 	if (ret != 0) {
 		unlink(lockfile);
 		return kr_error(errno);
 	}
-	ret = stat(mdb_datafile, &old_stat);
+	ret = fstat(fd, &new_stat);
 	if (ret != 0) {
 		unlink(lockfile);
 		return kr_error(errno);
