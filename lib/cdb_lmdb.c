@@ -101,7 +101,18 @@ static int txn_begin(struct lmdb_env *env, MDB_txn **txn, bool rdonly)
 		}
 	}
 	unsigned flags = rdonly ? MDB_RDONLY : 0;
-	return lmdb_error(mdb_txn_begin(env->env, NULL, flags, txn));
+	int ret = mdb_txn_begin(env->env, NULL, flags, txn);
+	if (ret == MDB_MAP_RESIZED) {
+		kr_log_info("[cach] MAP_RESIZED\n");
+		/* Another process increased the size.
+		 * ATM no other transactions of ours should be open.
+		 * Let's try to recover. */
+		ret = mdb_env_set_mapsize(env->env, 0);
+		if (ret == MDB_SUCCESS) {
+			ret = mdb_txn_begin(env->env, NULL, flags, txn);
+		}
+	}
+	return lmdb_error(ret);
 }
 
 static int txn_end(struct lmdb_env *env, MDB_txn *txn)
