@@ -37,7 +37,8 @@
 
 struct lmdb_env
 {
-	size_t mapsize;
+	size_t mapsize;   /**< size in bytes, as last requested by "user" */
+	size_t map_pages; /**< size in pages, as last observed in the DB */
 	MDB_dbi dbi;
 	MDB_env *env;
 	MDB_txn *rdtxn;
@@ -60,10 +61,11 @@ static int lmdb_error(int error)
 	}
 }
 
-/*! \brief Set the environment map size.
- * \note This also sets the maximum database size, see \fn mdb_env_set_mapsize
+/** Set the environment map size.
+ * \note No transaction may be active at the time (not checked);
+ * 	the env may be closed (but created).
  */
-static int set_mapsize(MDB_env *env, size_t map_size)
+static int mapsize_set(struct lmdb_env *env, size_t map_size)
 {
 	long page_size = sysconf(_SC_PAGESIZE);
 	if (page_size <= 0) {
@@ -72,12 +74,34 @@ static int set_mapsize(MDB_env *env, size_t map_size)
 
 	/* Round to page size. */
 	map_size = (map_size / page_size) * page_size;
-	int ret = mdb_env_set_mapsize(env, map_size);
+	int ret = mdb_env_set_mapsize(env->env, map_size);
 	if (ret != MDB_SUCCESS) {
 		return lmdb_error(ret);
 	}
+	env->mapsize = map_size;
+	/* This is just an estimate of reality, as LMDB may partially ignore map_size;
+	 * e.g. it won't shrink below the last used page. */
+	env->map_pages = map_size / page_size;
+	return kr_ok();
+}
 
-	return 0;
+/** Refresh the environment map size after MDB_MAP_RESIZED (env->mapsize is unchanged).
+ * \note No transaction may be active at the time and the env must be open (not checked).
+ */
+static int mapsize_refresh(struct lmdb_env *env)
+{
+	MDB_envinfo info;
+	int ret = mdb_env_info(env->env, &info);
+	if (ret != MDB_SUCCESS) {
+		return lmdb_error(ret);
+	}
+	MDB_stat stat;
+	ret = mdb_env_stat(env->env, &stat);
+	if (ret != MDB_SUCCESS) {
+		return lmdb_error(ret);
+	}
+	env->map_pages = info.me_mapsize / stat.ms_psize;
+	return kr_ok();
 }
 
 static int txn_begin(struct lmdb_env *env, MDB_txn **txn, bool rdonly)
@@ -103,18 +127,19 @@ static int txn_begin(struct lmdb_env *env, MDB_txn **txn, bool rdonly)
 	unsigned flags = rdonly ? MDB_RDONLY : 0;
 	int ret = mdb_txn_begin(env->env, NULL, flags, txn);
 	if (ret == MDB_MAP_RESIZED) {
-		kr_log_info("[cach] MAP_RESIZED\n");
+		kr_log_info("[cache] MAP_RESIZED\n");
 		/* Another process increased the size.
 		 * ATM no other transactions of ours should be open.
 		 * Let's try to recover. */
-		ret = mdb_env_set_mapsize(env->env, 0);
-		if (ret == MDB_SUCCESS) {
+		ret = mapsize_refresh(env);
+		if (ret == kr_ok()) {
 			ret = mdb_txn_begin(env->env, NULL, flags, txn);
 		}
 	}
 	return lmdb_error(ret);
 }
 
+/** Finish a *read-only* transaction. */
 static int txn_end(struct lmdb_env *env, MDB_txn *txn)
 {
 	assert(env && txn);
@@ -166,22 +191,23 @@ static int cdb_open_env(struct lmdb_env *env, unsigned flags, const char *path, 
 	if (ret != MDB_SUCCESS) {
 		return lmdb_error(ret);
 	}
+	env->env = mdb_env;
 
-	ret = set_mapsize(mdb_env, mapsize);
+	ret = mapsize_set(env, mapsize);
 	if (ret != 0) {
-		mdb_env_close(mdb_env);
+		mdb_env_close(env->env);
+		env->env = NULL;
 		return ret;
 	}
 
 	ret = mdb_env_open(mdb_env, path, flags, LMDB_FILE_MODE);
 	if (ret != MDB_SUCCESS) {
-		mdb_env_close(mdb_env);
+		mdb_env_close(env->env);
+		env->env = NULL;
 		return lmdb_error(ret);
 	}
+	mapsize_refresh(env);
 
-	/* Keep the environment pointer. */
-	env->env = mdb_env;
-	env->mapsize = mapsize;
 	return 0;
 }
 
@@ -363,6 +389,16 @@ static int cdb_write(struct lmdb_env *env, MDB_txn *txn, knot_db_val_t *key, kno
 	MDB_val _key = { key->len, key->data };
 	MDB_val _val = { val->len, val->data };
 	int ret = mdb_put(txn, env->dbi, &_key, &_val, flags);
+	if (ret == MDB_MAP_FULL) { // FIXME: remove
+		MDB_stat stat;
+		int err = mdb_env_stat(env->env, &stat);
+		if (err) {
+			kr_log_error("mdb_env_stat failed\n");
+		} else {
+			kr_log_info("mdb_env_stat pages: %zu + %zu + %zu\n",
+				stat.ms_branch_pages, stat.ms_leaf_pages, stat.ms_overflow_pages);
+		}
+	}
 	if (ret != MDB_SUCCESS) {
 		return lmdb_error(ret);
 	}
@@ -377,9 +413,43 @@ static int cdb_writev(knot_db_t *db, knot_db_val_t *key, knot_db_val_t *val, int
 	struct lmdb_env *env = db;
 	MDB_txn *txn = NULL;
 	int ret = txn_begin(env, &txn, false);
+
 	if (ret != 0) {
 		return ret;
 	}
+
+	/* Try to anticipate database overflow and clear it. */
+	do {
+		MDB_stat stat;
+		ret = mdb_env_stat(env->env, &stat);
+		if (ret) {
+			kr_log_error("[cache] LMDB _env_stat failed, trying to ignore: %s\n",
+					mdb_strerror(ret));
+			break;
+		}
+		size_t used_pages = stat.ms_branch_pages + stat.ms_leaf_pages
+			+ stat.ms_overflow_pages;
+		if (used_pages + 256 < env->map_pages) {
+			break;
+		}
+		ret = mdb_drop(txn, env->dbi, 0);
+		/* Commit and reopen the transaction, so that the pages can be
+		 * freed sooner, as new readers will get the empty DB instead now. */
+		if (!ret) {
+			ret = mdb_txn_commit(txn);
+		}
+		if (ret) {
+			// TODO: better approach?
+			kr_log_error("[cache] approaching overflow and LMDB _drop failed, trying to ignore: %s\n",
+					mdb_strerror(ret));
+			return kr_error(KNOT_ERROR);
+		}
+		kr_log_info("[cache] LMDB was almost full; cleared successfully\n");
+		ret = txn_begin(env, &txn, false);
+		if (ret) {
+			return ret;
+		}
+	} while (false);
 
 	bool reserved = false;
 	for (int i = 0; i < maxcount; ++i) {
