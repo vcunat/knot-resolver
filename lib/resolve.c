@@ -188,6 +188,13 @@ static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct k
 			/* @todo We could stop resolution here for NXDOMAIN, but we can't because of broken CDNs */
 			qry->flags.NO_MINIMIZE = true;
 			kr_make_query(qry, pkt);
+
+			if (knot_dname_labels(target, NULL) < 2 && ret == 0) {
+				char sname_str[KNOT_DNAME_MAXLEN] = {0};
+				knot_dname_to_str(sname_str, target, KNOT_DNAME_MAXLEN);
+				kr_log_info("hit %s NS\n", sname_str);
+			}
+
 			return;
 		}
 		assert(target[0]);

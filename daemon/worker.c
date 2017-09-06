@@ -25,6 +25,7 @@
 #include <malloc.h>
 #endif
 #include <assert.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include "lib/utils.h"
@@ -750,6 +751,18 @@ static int qr_task_step(struct qr_task *task, const struct sockaddr *packet_sour
 	int state = kr_resolve_consume(&task->req, packet_source, packet);
 	while (state == KR_STATE_PRODUCE) {
 		state = kr_resolve_produce(&task->req, &task->addrlist, &sock_type, task->pktbuf);
+
+		const knot_dname_t *qname = knot_pkt_qname(task->pktbuf);
+		if (state == KR_STATE_CONSUME && knot_dname_labels(qname, NULL) < 2) {
+			char qname_str[KNOT_DNAME_MAXLEN] = {0};
+			knot_dname_to_str(qname_str, qname, KNOT_DNAME_MAXLEN);
+			for (char *s = qname_str; *s; ++s)
+				*s = tolower(*s);
+			char qtype_str[32] = {0};
+			knot_rrtype_to_string(knot_pkt_qtype(task->pktbuf), qtype_str, 32);
+			kr_log_info("miss %s %s\n", qname_str, qtype_str);
+		}
+
 		if (unlikely(++task->iter_count > KR_ITER_LIMIT || task->timeouts >= KR_TIMEOUT_LIMIT)) {
 			return qr_task_finalize(task, KR_STATE_FAIL);
 		}

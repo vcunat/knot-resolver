@@ -196,6 +196,15 @@ int kr_cache_peek(struct kr_cache *cache, uint8_t tag, const knot_dname_t *name,
 	} else {
 		cache->stats.miss += 1;
 	}
+
+	if (knot_dname_labels(name, NULL) < 2 && ret == 0) {
+		char sname_str[KNOT_DNAME_MAXLEN] = {0};
+		knot_dname_to_str(sname_str, name, KNOT_DNAME_MAXLEN);
+		char stype_str[32] = {0};
+		knot_rrtype_to_string(type, stype_str, 32);
+		kr_log_info("hit %s %s\n", sname_str, stype_str);
+	}
+
 	return ret;
 }
 
