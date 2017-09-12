@@ -48,8 +48,9 @@ static void check_bufsize(uv_handle_t* handle)
 
 static void session_clear(struct session *s)
 {
-	assert(s->outgoing || s->tasks.len == 0);
+	assert(s->tasks.len == 0 && s->waiting.len == 0);
 	array_clear(s->tasks);
+	array_clear(s->waiting);
 	tls_free(s->tls_ctx);
 	memset(s, 0, sizeof(*s));
 }
@@ -57,6 +58,7 @@ static void session_clear(struct session *s)
 void session_free(struct session *s)
 {
 	if (s) {
+		assert(s->tasks.len == 0 && s->waiting.len == 0);
 		session_clear(s);
 		free(s);
 	}
@@ -89,6 +91,7 @@ static void session_release(struct worker_ctx *worker, uv_handle_t *handle)
 	if (!s) {
 		return;
 	}
+	assert(s->tasks.len == 0);
 	if (!s->outgoing && handle->type == UV_TCP) {
 		worker_end_tcp(worker, handle); /* to free the buffering task */
 	}
@@ -158,8 +161,10 @@ static int udp_bind_finalize(uv_handle_t *handle)
 {
 	check_bufsize((uv_handle_t *)handle);
 	/* Handle is already created, just create context. */
-	handle->data = session_new();
-	assert(handle->data);
+	struct session *session = session_new();
+	assert(session);
+	session->handle = handle;
+	handle->data = session;
 	return io_start_read((uv_handle_t *)handle);
 }
 
@@ -379,8 +384,10 @@ void io_create(uv_loop_t *loop, uv_handle_t *handle, int type)
 	}
 
 	struct worker_ctx *worker = loop->data;
-	handle->data = session_borrow(worker);
-	assert(handle->data);
+	struct session *session = session_borrow(worker);
+	assert(session);
+	session->handle = handle;
+	handle->data = session;
 }
 
 void io_deinit(uv_handle_t *handle)

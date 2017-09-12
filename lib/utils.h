@@ -196,6 +196,9 @@ int kr_inaddr_len(const struct sockaddr *addr);
 /** Port. */
 KR_EXPORT KR_PURE
 uint16_t kr_inaddr_port(const struct sockaddr *addr);
+/** String representation for given address as "<addr>#<port>" */
+KR_EXPORT
+int kr_inaddr_str(const struct sockaddr *addr, char *buf, size_t *buflen);
 /** Return address type for string. */
 KR_EXPORT KR_PURE
 int kr_straddr_family(const char *addr);

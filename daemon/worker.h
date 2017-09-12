@@ -21,6 +21,8 @@
 #include "lib/generic/map.h"
 
 
+/** Query resolution task (opaque). */
+struct qr_task;
 /** Worker state (opaque). */
 struct worker_ctx;
 /** Worker callback */
@@ -75,6 +77,12 @@ void worker_reclaim(struct worker_ctx *worker);
 /** Freelist of available mempools. */
 typedef array_t(void *) mp_freelist_t;
 
+/** List of query resolution tasks. */
+typedef array_t(struct qr_task *) qr_tasklist_t;
+
+/** Session list. */
+typedef array_t(struct session *) qr_sessionlist_t;
+
 /** \details Worker state is meant to persist during the whole life of daemon. */
 struct worker_ctx {
 	struct engine *engine;
@@ -103,6 +111,10 @@ struct worker_ctx {
 		size_t timeout;
 	} stats;
 
+	/* List of active outbound TCP sessions */
+	map_t tcp_connected;
+	/* List of outbound TCP sessions waiting to be accepted */
+	map_t tcp_waiting;
 	map_t outgoing;
 	mp_freelist_t pool_mp;
 	mp_freelist_t pool_ioreq;
@@ -110,14 +122,27 @@ struct worker_ctx {
 	knot_mm_t pkt_pool;
 };
 
+/** User request state. */
+struct request_ctx
+{
+	struct kr_request req;
+	struct {
+		union inaddr addr;
+		union inaddr dst_addr;
+		/* uv_handle_t *handle; */
+		struct session *session;
+	} source;
+	struct worker_ctx *worker;
+	qr_tasklist_t tasks;
+};
+
 /** Query resolution task. */
 struct qr_task
 {
-	struct kr_request req;
-	struct worker_ctx *worker;
-	struct session *session;
+	struct request_ctx *ctx;
+	struct session *current_session;
 	knot_pkt_t *pktbuf;
-	array_t(struct qr_task *) waiting;
+	qr_tasklist_t waiting;
 	uv_handle_t *pending[MAX_PENDING];
 	uint16_t pending_count;
 	uint16_t addrlist_count;
@@ -129,11 +154,6 @@ struct qr_task
 	uv_timer_t *timeout;
 	worker_cb_t on_complete;
 	void *baton;
-	struct {
-		union inaddr addr;
-		union inaddr dst_addr;
-		uv_handle_t *handle;
-	} source;
 	uint32_t refs;
 	bool finished : 1;
 	bool leading  : 1;

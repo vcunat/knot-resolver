@@ -116,6 +116,10 @@ local function forward(target)
 		qry.flags.ALWAYS_CUT = false
 		qry.flags.NO_MINIMIZE = true
 		qry.flags.AWAIT_CUT = true
+-- Only for testing purposes
+		req.options.TCP = true
+		qry.flags.TCP = true
+--
 		set_nslist(qry, list)
 		return state
 	end

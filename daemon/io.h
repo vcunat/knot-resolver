@@ -19,8 +19,8 @@
 #include <uv.h>
 #include <libknot/packet/pkt.h>
 #include "lib/generic/array.h"
+#include "daemon/worker.h"
 
-struct qr_task;
 struct tls_ctx_t;
 
 /* Per-session (TCP or UDP) persistent structure,
@@ -30,10 +30,16 @@ struct session {
 	bool outgoing;
 	bool throttled;
 	bool has_tls;
+	bool connected;
+	union inaddr peer;
+	uv_handle_t *handle;
 	uv_timer_t timeout;
 	struct qr_task *buffering; /**< Worker buffers the incomplete TCP query here. */
 	struct tls_ctx_t *tls_ctx;
-	array_t(struct qr_task *) tasks;
+	uint8_t msg_hdr[4];
+	ssize_t msg_hdr_idx;
+	qr_tasklist_t tasks;
+	qr_tasklist_t waiting;
 };
 
 void session_free(struct session *s);

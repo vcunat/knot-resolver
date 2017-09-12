@@ -315,6 +315,31 @@ uint16_t kr_inaddr_port(const struct sockaddr *addr)
 	}
 }
 
+int kr_inaddr_str(const struct sockaddr *addr, char *buf, size_t *buflen)
+{
+	int ret = kr_ok();
+	if (!addr || !buf || !buflen) {
+		return kr_error(EINVAL);
+	}
+
+	char str[INET6_ADDRSTRLEN + 6];
+	if (!inet_ntop(addr->sa_family, kr_inaddr(addr), str, sizeof(str))) {
+		return kr_error(errno);
+	}
+	int len = strlen(str);
+	str[len] = '#';
+	u16tostr((uint8_t *)&str[len + 1], kr_inaddr_port(addr));
+	len += 6;
+	str[len] = 0;
+	if (len >= *buflen) {
+		ret = kr_error(ENOSPC);
+	} else {
+		memcpy(buf, str, len + 1);
+	}
+	*buflen = len;
+	return ret;
+}
+
 int kr_straddr_family(const char *addr)
 {
 	if (!addr) {
