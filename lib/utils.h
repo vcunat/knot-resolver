@@ -202,7 +202,7 @@ int kr_inaddr_str(const struct sockaddr *addr, char *buf, size_t *buflen);
 /** Return address type for string. */
 KR_EXPORT KR_PURE
 int kr_straddr_family(const char *addr);
-/** Return address length in given family. */
+/** Return address length in given family (struct in*_addr). */
 KR_EXPORT KR_CONST
 int kr_family_len(int family);
 /** Create a sockaddr* from string+port representation (also accepts IPv6 link-local). */

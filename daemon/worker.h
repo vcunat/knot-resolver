@@ -33,7 +33,12 @@ struct worker_ctx *worker_create(struct engine *engine, knot_mm_t *pool,
 		int worker_id, int worker_count);
 
 /**
- * Process incoming packet (query or answer to subrequest).
+ * Process an incoming packet (query from a client or answer from upstream).
+ *
+ * @param worker the singleton worker
+ * @param handle socket through which the request came
+ * @param query  the packet, or NULL on an error from the transport layer
+ * @param addr   the address from which the packet came (or NULL, possibly, on error)
  * @return 0 or an error code
  */
 int worker_submit(struct worker_ctx *worker, uv_handle_t *handle, knot_pkt_t *query,
@@ -57,6 +62,7 @@ int worker_end_tcp(struct worker_ctx *worker, uv_handle_t *handle);
 /**
  * Schedule query for resolution.
  *
+ * After resolution finishes, invoke on_complete with baton.
  * @return 0 or an error code
  *
  * @note the options passed are |-combined with struct kr_context::options
@@ -122,42 +128,6 @@ struct worker_ctx {
 	knot_mm_t pkt_pool;
 };
 
-/** User request state. */
-struct request_ctx
-{
-	struct kr_request req;
-	struct {
-		union inaddr addr;
-		union inaddr dst_addr;
-		/* uv_handle_t *handle; */
-		struct session *session;
-	} source;
-	struct worker_ctx *worker;
-	qr_tasklist_t tasks;
-};
-
-/** Query resolution task. */
-struct qr_task
-{
-	struct request_ctx *ctx;
-	struct session *current_session;
-	knot_pkt_t *pktbuf;
-	qr_tasklist_t waiting;
-	uv_handle_t *pending[MAX_PENDING];
-	uint16_t pending_count;
-	uint16_t addrlist_count;
-	uint16_t addrlist_turn;
-	uint16_t timeouts;
-	uint16_t iter_count;
-	uint16_t bytes_remaining;
-	struct sockaddr *addrlist;
-	uv_timer_t *timeout;
-	worker_cb_t on_complete;
-	void *baton;
-	uint32_t refs;
-	bool finished : 1;
-	bool leading  : 1;
-};
 
 /** @endcond */
 

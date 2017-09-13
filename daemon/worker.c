@@ -37,6 +37,47 @@
 
 #define VERBOSE_MSG(qry, fmt...) QRVERBOSE(qry, "wrkr", fmt)
 
+
+/** Client request state. */
+struct request_ctx
+{
+	struct kr_request req;
+	struct {
+		union inaddr addr;
+		union inaddr dst_addr;
+		/* uv_handle_t *handle; */
+
+		/** NULL if the request didn't come over network. */
+		struct session *session;
+	} source;
+	struct worker_ctx *worker;
+	qr_tasklist_t tasks;
+};
+
+/** Query resolution task. */
+struct qr_task
+{
+	struct request_ctx *ctx;
+	struct session *current_session;
+	knot_pkt_t *pktbuf;
+	qr_tasklist_t waiting;
+	uv_handle_t *pending[MAX_PENDING];
+	uint16_t pending_count;
+	uint16_t addrlist_count;
+	uint16_t addrlist_turn;
+	uint16_t timeouts;
+	uint16_t iter_count;
+	uint16_t bytes_remaining;
+	struct sockaddr *addrlist;
+	uv_timer_t *timeout;
+	worker_cb_t on_complete;
+	void *baton;
+	uint32_t refs;
+	bool finished : 1;
+	bool leading  : 1;
+};
+
+
 /* @internal Union of various libuv objects for freelist. */
 struct req
 {
@@ -349,9 +390,9 @@ static void mp_poison(struct mempool *mp, bool poison)
 #endif
 /** @endcond */
 
+/** Get a mempool.  (Recycle if possible.)  */
 static inline struct mempool *pool_borrow(struct worker_ctx *worker)
 {
-	/* Recycle available mempool if possible */
 	struct mempool *mp = NULL;
 	if (worker->pool_mp.len > 0) {
 		mp = array_tail(worker->pool_mp);
@@ -363,9 +404,9 @@ static inline struct mempool *pool_borrow(struct worker_ctx *worker)
 	return mp;
 }
 
+/** Return a mempool.  (Cache them up to some count.) */
 static inline void pool_release(struct worker_ctx *worker, struct mempool *mp)
 {
-	/* Return mempool to ring or free it if it's full */
 	if (worker->pool_mp.len < MP_FREELIST_SIZE) {
 		mp_flush(mp);
 		array_push(worker->pool_mp, mp);
@@ -382,11 +423,15 @@ static int subreq_key(char *dst, knot_pkt_t *pkt)
 	return kr_rrkey(dst, knot_pkt_qname(pkt), knot_pkt_qtype(pkt), knot_pkt_qclass(pkt));
 }
 
+/** Create and initialize a request_ctx (on a fresh mempool).
+ *
+ * handle and addr point to the source of the request, and they are NULL
+ * in case the request didn't come from network.
+ */
 static struct request_ctx *request_create(struct worker_ctx *worker,
 					  uv_handle_t *handle,
 					  const struct sockaddr *addr)
 {
-	/* Recycle available mempool if possible */
 	knot_mm_t pool = {
 		.ctx = pool_borrow(worker),
 		.alloc = (knot_mm_alloc_t) mp_alloc
@@ -395,9 +440,10 @@ static struct request_ctx *request_create(struct worker_ctx *worker,
 	/* Create request context */
 	struct request_ctx *ctx = mm_alloc(&pool, sizeof(*ctx));
 	if (!ctx) {
-		mp_delete(pool.ctx);
+		pool_release(worker, pool.ctx);
 		return NULL;
 	}
+	memset(ctx, 0, sizeof(*ctx));
 
 	/* TODO Relocate pool to struct request */
 	ctx->worker = worker;
@@ -405,27 +451,20 @@ static struct request_ctx *request_create(struct worker_ctx *worker,
 	ctx->source.session = handle ? handle->data : NULL;
 
 	struct kr_request *req = &ctx->req;
-
 	req->pool = pool;
-	req->answer = NULL;
-	req->qsource.key = NULL;
-	req->qsource.addr = NULL;
-	req->qsource.dst_addr = NULL;
-	req->qsource.packet = NULL;
-	req->qsource.opt = NULL;
 
 	/* TODO add counter for concurrent queries */
 	worker->stats.concurrent += 1;
 
 	/* Remember query source addr */
-	if (!addr) {
-		ctx->source.addr.ip4.sin_family = AF_UNSPEC;
+	if (!addr || (addr->sa_family != AF_INET && addr->sa_family != AF_INET6)) {
+		ctx->source.addr.ip.sa_family = AF_UNSPEC;
 	} else {
 		size_t addr_len = sizeof(struct sockaddr_in);
 		if (addr->sa_family == AF_INET6)
 			addr_len = sizeof(struct sockaddr_in6);
-		memcpy(&ctx->source.addr, addr, addr_len);
-		ctx->req.qsource.addr = (const struct sockaddr *)&ctx->source.addr;
+		memcpy(&ctx->source.addr.ip, addr, addr_len);
+		ctx->req.qsource.addr = &ctx->source.addr.ip;
 	}
 
 	if (!handle) {
@@ -434,8 +473,8 @@ static struct request_ctx *request_create(struct worker_ctx *worker,
 
 	/* Remember the destination address. */
 	int addr_len = sizeof(ctx->source.dst_addr);
-	struct sockaddr *dst_addr = (struct sockaddr *)&ctx->source.dst_addr;
-	ctx->source.dst_addr.ip4.sin_family = AF_UNSPEC;
+	struct sockaddr *dst_addr = &ctx->source.dst_addr.ip;
+	ctx->source.dst_addr.ip.sa_family = AF_UNSPEC;
 	if (handle->type == UV_UDP) {
 		if (uv_udp_getsockname((uv_udp_t *)handle, dst_addr, &addr_len) == 0) {
 			req->qsource.dst_addr = dst_addr;
@@ -451,6 +490,7 @@ static struct request_ctx *request_create(struct worker_ctx *worker,
 	return ctx;
 }
 
+/** More initialization, related to the particular incoming query/packet. */
 static int request_start(struct request_ctx *ctx, knot_pkt_t *query)
 {
 	assert(query && ctx);
@@ -466,11 +506,10 @@ static int request_start(struct request_ctx *ctx, knot_pkt_t *query)
 				 KNOT_WIRE_MIN_PKTSIZE);
 	}
 
-	knot_pkt_t *answer = knot_pkt_new(NULL, answer_max, &req->pool);
-	if (!answer) {
+	req->answer = knot_pkt_new(NULL, answer_max, &req->pool);
+	if (!req->answer) {
 		return kr_error(ENOMEM);
 	}
-	req->answer = answer;
 
 	/* Remember query source TSIG key */
 	if (query->tsig_rr) {
@@ -484,13 +523,13 @@ static int request_start(struct request_ctx *ctx, knot_pkt_t *query)
 	/* Start resolution */
 	struct worker_ctx *worker = ctx->worker;
 	struct engine *engine = worker->engine;
-	kr_resolve_begin(req, &engine->resolver, answer);
+	kr_resolve_begin(req, &engine->resolver, req->answer);
 	worker->stats.queries += 1;
 	/* Throttle outbound queries only when high pressure */
 	if (worker->stats.concurrent < QUERY_RATE_THRESHOLD) {
 		req->options.NO_THROTTLE = true;
 	}
-	return 0;
+	return kr_ok();
 }
 
 static void request_free(struct request_ctx *ctx)
@@ -525,29 +564,28 @@ static struct qr_task *qr_task_create(struct request_ctx *ctx)
 	if (!task) {
 		return NULL;
 	}
+	memset(task, 0, sizeof(*task)); /* avoid accidentally unitialized fields */
 
 	/* Create packet buffers for answer and subrequests */
 	knot_pkt_t *pktbuf = knot_pkt_new(NULL, pktbuf_max, &ctx->req.pool);
 	if (!pktbuf) {
+		mm_free(&ctx->req.pool, task);
 		return NULL;
 	}
 	pktbuf->size = 0;
+
 	task->ctx = ctx;
 	task->pktbuf = pktbuf;
 	array_init(task->waiting);
-	task->addrlist = NULL;
-	task->pending_count = 0;
-	task->bytes_remaining = 0;
-	task->iter_count = 0;
-	task->timeouts = 0;
 	task->refs = 1;
-	task->finished = false;
-	task->leading = false;
-	task->current_session = NULL;
-	task->timeout = NULL;
-	task->on_complete = NULL;
+
 	int ret = array_push(ctx->tasks, task);
-	return ret < 0 ? NULL : task;
+	if (ret < 0) {
+		mm_free(&ctx->req.pool, task);
+		mm_free(&ctx->req.pool, pktbuf);
+		return NULL;
+	}
+	return task;
 }
 
 /* This is called when the task refcount is zero, free memory. */
@@ -1239,12 +1277,13 @@ static struct qr_task* find_task(const struct session *session, uint16_t msg_id)
 int worker_submit(struct worker_ctx *worker, uv_handle_t *handle,
 		  knot_pkt_t *msg, const struct sockaddr* addr)
 {
-	if (!worker || !handle) {
+	bool OK = worker && handle && handle->data;
+	if (!OK) {
+		assert(false);
 		return kr_error(EINVAL);
 	}
 
 	struct session *session = handle->data;
-	assert(session);
 
 	/* Parse packet */
 	int ret = parse_packet(msg);
@@ -1252,11 +1291,11 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle,
 	/* Start new task on listening sockets,
 	 * or resume if this is subrequest */
 	struct qr_task *task = NULL;
-	if (!session->outgoing) {
+	if (!session->outgoing) { /* request from a client */
 		/* Ignore badly formed queries or responses. */
 		if (!msg || ret != 0 || knot_wire_get_qr(msg->wire)) {
 			if (msg) worker->stats.dropped += 1;
-			return kr_error(EINVAL); /* Ignore. */
+			return kr_error(EILSEQ);
 		}
 		struct request_ctx *ctx = request_create(worker, handle, addr);
 		if (!ctx) {
@@ -1274,7 +1313,7 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle,
 			request_free(ctx);
 			return kr_error(ENOMEM);
 		}
-	} else if (msg) {
+	} else if (msg) { /* response from upstream */
 		task = find_task(session, knot_wire_get_id(msg->wire));
 	}
 
@@ -1534,6 +1573,7 @@ int worker_resolve(struct worker_ctx *worker, knot_pkt_t *query,
 		   void *baton)
 {
 	if (!worker || !query) {
+		assert(false);
 		return kr_error(EINVAL);
 	}
 
@@ -1545,6 +1585,7 @@ int worker_resolve(struct worker_ctx *worker, knot_pkt_t *query,
 	/* Create task */
 	struct qr_task *task = qr_task_create(ctx);
 	if (!task) {
+		request_free(ctx);
 		return kr_error(ENOMEM);
 	}
 	task->baton = baton;
@@ -1556,6 +1597,7 @@ int worker_resolve(struct worker_ctx *worker, knot_pkt_t *query,
 	kr_qflags_set(&task->ctx->req.options, options);
 
 	if (ret != 0) {
+		request_free(ctx);
 		qr_task_unref(task);
 		return ret;
 	}
