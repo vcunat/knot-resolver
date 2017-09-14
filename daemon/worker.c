@@ -1032,6 +1032,8 @@ static int qr_task_finalize(struct qr_task *task, int state)
 		(void) qr_task_send(task, ctx->source.session->handle,
 				    (struct sockaddr *)&ctx->source.addr,
 				    ctx->req.answer);
+	} else {
+		(void) qr_task_on_send(task, NULL, kr_error(EIO));
 	}
 	return state == KR_STATE_DONE ? 0 : kr_error(EIO);
 }
@@ -1259,7 +1261,7 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle,
 	}
 
 	/* Consume input and produce next message */
-	return qr_task_step(task, NULL, msg);
+	return qr_task_step(task, addr, msg);
 }
 
 static int map_add_tcp_session(map_t *map, const struct sockaddr* addr,
@@ -1489,7 +1491,8 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 			submitted += 1;
 		}
 		if (ret == 0) {
-			ret = qr_task_step(task, NULL, pkt_buf);
+			const struct sockaddr *addr = session->outgoing ? &session->peer.ip : NULL;
+			ret = qr_task_step(task, addr, pkt_buf);
 		}
 		/* Process next message part in the stream if no error so far */
 		if (ret != 0) {
