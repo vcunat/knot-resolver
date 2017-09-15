@@ -45,7 +45,8 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle, knot_pkt_t *qu
 		const struct sockaddr* addr);
 
 /**
- * Process incoming DNS/TCP message fragment(s).
+ * Process incoming DNS message fragment(s) that arrived over a stream (TCP, TLS).
+ *
  * If the fragment contains only a partial message, it is buffered.
  * If the fragment contains a complete query or completes current fragment, execute it.
  * @return the number of newly-completed requests (>=0) or an error code

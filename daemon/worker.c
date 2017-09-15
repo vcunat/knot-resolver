@@ -606,7 +606,7 @@ static void qr_task_free(struct qr_task *task)
 		for (size_t i = 0; i < session->tasks.len; ++i) {
 			if (session->tasks.at[i] == task) {
 				array_del(session->tasks, i);
-				break;		
+				break;
 			}
 		}
 	}
@@ -1453,6 +1453,7 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 	if (task) {
 		pkt_buf = task->pktbuf;
 	} else {
+		/* Update DNS header in session->msg_hdr* */
 		assert(session->msg_hdr_idx < sizeof(session->msg_hdr));
 		ssize_t hdr_amount = sizeof(session->msg_hdr) -
 				     session->msg_hdr_idx;
@@ -1465,7 +1466,7 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 			len -= hdr_amount;
 			msg += hdr_amount;
 		}
-		if (len == 0 && session->msg_hdr_idx < sizeof(session->msg_hdr)) {
+		if (len == 0) { /* no data beyond msg_hdr -> not much to do */
 			return kr_ok();
 		}
 		assert(session->msg_hdr_idx == sizeof(session->msg_hdr));
@@ -1473,41 +1474,47 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 		uint16_t msg_size = get_msg_size(session->msg_hdr);
 		uint16_t msg_id = knot_wire_get_id(session->msg_hdr + 2);
 		if (msg_size < KNOT_WIRE_HEADER_SIZE) {
-			return kr_error(EINVAL);
+			/* better kill the connection; we would probably get out of sync */
+			return kr_error(EILSEQ);
 		}
 
+		/* get task */
 		if (!session->outgoing) {
 			/* This is a new query, create a new task that we can use
-			 * to buffer incoming message until it's complete.
-			 * Get TCP peer name, keep zeroed address if it fails. */
-			struct sockaddr_storage addr;
-			memset(&addr, 0, sizeof(addr));
-			int addr_len = sizeof(addr);
-			uv_tcp_getpeername((uv_tcp_t *)handle,
-					   (struct sockaddr *)&addr, &addr_len);
+			 * to buffer incoming message until it's complete. */
+			struct sockaddr_storage addr_storage;
+			struct sockaddr *addr = (struct sockaddr *)&addr_storage;
+			int addr_len = sizeof(addr_storage);
+			int ret = uv_tcp_getpeername((uv_tcp_t *)handle, addr, &addr_len);
+			if (ret) {
+				addr = NULL; /* fallback */
+			}
 			struct request_ctx *ctx = request_create(worker,
 								 (uv_handle_t *)handle,
-								 (struct sockaddr *)&addr);
+								 addr);
 			if (!ctx) {
 				return kr_error(ENOMEM);
 			}
 			task = qr_task_create(ctx);
 			if (!task) {
+				request_free(ctx);
 				return kr_error(ENOMEM);
 			}
-			pkt_buf = task->pktbuf;
 		} else {
 			/* Start of response from upstream.
 			 * The session task list must contain a task
 			 * with the same msg id. */
 			task = find_task(session, msg_id);
+			/* FIXME: on high load over one connection, it's likely
+			 * that we will get multiple matches sooner or later (!) */
 			if (!task) {
-				/* Task was not found, ignore packet */
+				/* TODO: only ignore one message without killing connection */
 				return kr_error(ENOENT);
 			}
-			pkt_buf = task->pktbuf;
-			knot_pkt_clear(pkt_buf);
+			knot_pkt_clear(task->pktbuf);
 		}
+
+		pkt_buf = task->pktbuf;
 		knot_wire_set_id(pkt_buf->wire, msg_id);
 		pkt_buf->size = 2;
 		task->bytes_remaining = msg_size - 2;
@@ -1522,13 +1529,14 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 	if (pkt_buf->size + to_read > pkt_buf->max_size) {
 		pkt_buf->size = 0;
 		task->bytes_remaining = 0;
+		/* TODO: only ignore one message without killing connection */
 		return kr_error(EMSGSIZE);
 	}
 	/* Buffer message and check if it's complete */
 	memcpy(pkt_buf->wire + pkt_buf->size, msg, to_read);
 	pkt_buf->size += to_read;
-	if (to_read >= task->bytes_remaining) {
-		task->bytes_remaining = 0;
+	task->bytes_remaining -= to_read;
+	if (task->bytes_remaining == 0) {
 		/* Message was assembled, clear temporary. */
 		session->buffering = NULL;
 		session->msg_hdr_idx = 0;
@@ -1556,14 +1564,13 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 			return ret;
 		}
 		if (len - to_read > 0 && !session->outgoing) {
+			/* TODO: this is simple via iteration; recursion doesn't really help */
 			ret = worker_process_tcp(worker, handle, msg + to_read, len - to_read);
 			if (ret < 0) {
 				return ret;
 			}
 			submitted += ret;
 		}
-	} else {
-		task->bytes_remaining -= to_read;	
 	}
 	return submitted;
 }

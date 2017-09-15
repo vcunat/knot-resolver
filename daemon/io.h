@@ -27,7 +27,7 @@ struct tls_ctx_t;
  * that exists between remote counterpart and a local socket.
  */
 struct session {
-	bool outgoing;
+	bool outgoing; /**< True: to upstream; false: from a client. */
 	bool throttled;
 	bool has_tls;
 	bool connected;
@@ -36,8 +36,10 @@ struct session {
 	uv_timer_t timeout;
 	struct qr_task *buffering; /**< Worker buffers the incomplete TCP query here. */
 	struct tls_ctx_t *tls_ctx;
-	uint8_t msg_hdr[4];
-	ssize_t msg_hdr_idx;
+
+	uint8_t msg_hdr[4];  /**< Buffer for DNS message header. */
+	ssize_t msg_hdr_idx; /**< The number of bytes in msg_hdr filled so far. */
+
 	qr_tasklist_t tasks;
 	qr_tasklist_t waiting;
 };
