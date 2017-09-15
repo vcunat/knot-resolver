@@ -1421,7 +1421,7 @@ int worker_process_tcp(struct worker_ctx *worker, uv_stream_t *handle,
 			hdr_amount = len;
 		}
 		if (hdr_amount > 0) {
-			memcpy(session->msg_hdr, msg, hdr_amount);
+			memcpy(session->msg_hdr + session->msg_hdr_idx, msg, hdr_amount);
 			session->msg_hdr_idx += hdr_amount;
 			len -= hdr_amount;
 			msg += hdr_amount;
