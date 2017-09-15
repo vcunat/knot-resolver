@@ -283,6 +283,8 @@ static void ioreq_kill_pending(struct qr_task *task)
 
 static void session_close(struct session *session)
 {
+	assert(session->tasks.len == 0 && session->waiting.len == 0);
+
 	if (!uv_is_closing(session->handle)) {
 		uv_close(session->handle, on_session_close);
 		session->connected = false;
@@ -298,8 +300,6 @@ static void session_close(struct session *session)
 		struct sockaddr *peer = &session->peer.ip;
 		worker_del_tcp_connected(worker, peer);
 	}
-
-	assert(session->tasks.len == 0 && session->waiting.len == 0);
 }
 
 static int session_add_waiting(struct session *session,
@@ -896,6 +896,20 @@ static void on_session_tcp_timeout(uv_timer_t *timer)
 {
 	struct session *s = timer->data;
 	assert(s && s->outgoing);
+	/* session was not used during timer timeout
+	 * remove it from connection list and close
+	 */
+	if (s->outgoing && s->peer.ip.sa_family != AF_UNSPEC) {
+		char key[INET6_ADDRSTRLEN + 6];
+		size_t len = sizeof(key);
+		int ret = kr_inaddr_str(&s->peer.ip, key, &len);
+
+		struct worker_ctx *worker = get_worker();
+		struct sockaddr *peer = &s->peer.ip;
+		worker_del_tcp_connected(worker, peer);
+	}
+	/* timer is static field of session structure,
+	 * so close it first. */
 	uv_close((uv_handle_t *)timer, on_session_tcp_timer_close);
 }
 
@@ -1118,11 +1132,15 @@ static int qr_task_step(struct qr_task *task,
 			 * It means that connection establishing or data sending
 			 * is comingright now. */
 			/* Task will be notified in on_connect() or qr_task_on_send(). */
+			if (session->tasks.len == 0 && session->waiting.len == 0) {
+				uv_timer_stop(&session->timeout);
+			}
+			qr_task_ref(task);
 			ret = (session_add_waiting(session, task) < 0);
 		} else if ((session = worker_find_tcp_connected(ctx->worker, addr)) != NULL) {
 			/* Connection has been already established */
 			assert(session->outgoing);
-			if (session->tasks.len == 0) {
+			if (session->tasks.len == 0 && session->waiting.len == 0) {
 				uv_timer_stop(&session->timeout);
 			}
 			/* will be removed in qr_task_on_send() */
