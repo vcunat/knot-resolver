@@ -180,7 +180,9 @@ struct kr_request {
 	struct kr_query *current_query;    /**< Current evaluated query. */
 	struct {
 		const knot_rrset_t *key;
+		/** address+port that sent the request or NULL */
 		const struct sockaddr *addr;
+		/** address+port that recieved the request or NULL */
 		const struct sockaddr *dst_addr;
 		const knot_pkt_t *packet;
 		const knot_rrset_t *opt;

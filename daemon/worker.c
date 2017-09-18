@@ -43,6 +43,7 @@ struct request_ctx
 {
 	struct kr_request req;
 	struct {
+		/* these two are storage for req.qsource.{addr,dst_addr} */
 		union inaddr addr;
 		union inaddr dst_addr;
 		/* uv_handle_t *handle; */
@@ -70,9 +71,10 @@ struct qr_task
 	uint16_t bytes_remaining;
 	struct sockaddr *addrlist;
 	uv_timer_t *timeout;
-	worker_cb_t on_complete;
-	void *baton;
-	uint32_t refs;
+
+	worker_cb_t on_complete; /**< callback after completing the request */
+	void *baton;             /**< data for on_complete */
+	uint32_t refs;           /**< reference count; for qr_task_{ref,unref} */
 	bool finished : 1;
 	bool leading  : 1;
 };
