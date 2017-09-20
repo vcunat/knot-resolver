@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <getopt.h>
 #include <libgen.h>
 #include <uv.h>
@@ -638,6 +639,14 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
+	}
+
+	/* Workaround for https://github.com/libuv/libuv/issues/45
+	 * (Write after ECONNRESET crash.) */
+	if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+		kr_log_error("[system] can't block SIGPIPE signal: %s\n",
+			     strerror(errno));
+		ret = EXIT_FAILURE;
 	}
 
 	if (ret != 0) {
