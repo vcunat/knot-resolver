@@ -60,7 +60,9 @@ struct kr_qflags {
 	bool NONAUTH : 1;        /**< Non-authoritative in-bailiwick records are enough.
 				  * TODO: utilize this also outside cache. */
 	bool FORWARD : 1;        /**< Forward all queries to upstream; validate answers. */
-	bool DNS64_MARK : 1;     /**< Internal mark for dns64 module. */
+	bool DNS64_MARK : 1;	 /**< Internal mark for dns64 module. */
+	bool SERVE_STALE : 1;	 /**< There was no response from upstream;
+				  * Try to retrieve stale records from cache. */
 };
 
 /** Combine flags together.  This means set union for simple flags. */

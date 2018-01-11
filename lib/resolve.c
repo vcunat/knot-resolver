@@ -893,10 +893,14 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 	if (resolution_time_exceeded(qry, kr_now())) {
 		return KR_STATE_FAIL;
 	}
+	bool tried_serve_stale = (qry->flags.SERVE_STALE);
 	bool tried_tcp = (qry->flags.TCP);
 	if (!packet || packet->size == 0) {
-		if (tried_tcp) {
+		if (tried_serve_stale)
 			request->state = KR_STATE_FAIL;
+		else if (tried_tcp) {
+			qry->flags.SERVE_STALE = true;
+			qry->flags.TCP = false;
 		} else {
 			qry->flags.TCP = true;
 		}
@@ -935,6 +939,10 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 		return KR_STATE_PRODUCE; /* Requery */
 	} else if (qry->flags.RESOLVED) {
 		kr_rplan_pop(rplan, qry);
+	} else if (!tried_serve_stale && (qry->flags.SERVE_STALE)) {
+		/* We have not received any answer form upstream both for udp and tcp,
+		 * try to retrieve stale records from cache. */
+		return KR_STATE_PRODUCE;
 	} else if (!tried_tcp && (qry->flags.TCP)) {
 		return KR_STATE_PRODUCE; /* Requery over TCP */
 	} else { /* Clear query flags for next attempt */
@@ -1318,6 +1326,13 @@ int kr_resolve_produce(struct kr_request *request, struct sockaddr **dst, int *t
 	}
 	/* If we have deferred answers, resume them. */
 	struct kr_query *qry = array_tail(rplan->pending);
+
+	/* STUB */
+	if (qry->flags.SERVE_STALE) {
+		VERBOSE_MSG(qry, "=> STALE SERVE condition detected, fail\n");
+		return KR_STATE_FAIL;
+	}
+
 	if (qry->deferred != NULL) {
 		/* @todo: Refactoring validator, check trust chain before resuming. */
 		int state = 0;
