@@ -889,11 +889,15 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 
 	/* Different processing for network error */
 	struct kr_query *qry = array_tail(rplan->pending);
+	bool tried_serve_stale = (qry->flags.SERVE_STALE);
 	/* Check overall resolution time */
 	if (resolution_time_exceeded(qry, kr_now())) {
-		return KR_STATE_FAIL;
+		if (tried_serve_stale) {
+			return KR_STATE_FAIL;
+		}
+		qry->flags.SERVE_STALE = true;
+		return KR_STATE_PRODUCE;
 	}
-	bool tried_serve_stale = (qry->flags.SERVE_STALE);
 	bool tried_tcp = (qry->flags.TCP);
 	if (!packet || packet->size == 0) {
 		if (tried_serve_stale)
