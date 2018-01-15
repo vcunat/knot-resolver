@@ -604,8 +604,7 @@ static int init_resolver(struct engine *engine)
 	/* Load basic modules */
 	engine_register(engine, "iterate", NULL, NULL);
 	engine_register(engine, "validate", NULL, NULL);
-	engine_register(engine, "rrcache", NULL, NULL);
-	engine_register(engine, "pktcache", NULL, NULL);
+	engine_register(engine, "cache", NULL, NULL);
 
 	return array_push(engine->backends, kr_cdb_lmdb());
 }
@@ -723,8 +722,8 @@ static void engine_unload(struct engine *engine, struct kr_module *module)
 	/* Unregister module */
 	auto_free char *name = strdup(module->name);
 	kr_module_unload(module);
-	/* Clear in Lua world */
-	if (name) {
+	/* Clear in Lua world, but not for embedded modules ('cache' in particular). */
+	if (name && !kr_module_embedded(name)) {
 		lua_pushnil(engine->L);
 		lua_setglobal(engine->L, name);
 	}

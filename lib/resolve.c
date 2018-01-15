@@ -167,6 +167,8 @@ static int invalidate_ns(struct kr_rplan *rplan, struct kr_query *qry)
  */
 static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct kr_cache *cache, uint32_t timestamp)
 {
+	return; // FIXME cleanup, etc.
+#if 0
 	if (qry->flags.NO_MINIMIZE) {
 		return;
 	}
@@ -196,6 +198,7 @@ static void check_empty_nonterms(struct kr_query *qry, knot_pkt_t *pkt, struct k
 		target = knot_wire_next_label(target, NULL);
 	}
 	kr_cache_sync(cache);
+#endif
 }
 
 static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name,
@@ -231,7 +234,7 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 	 * try to fetch ta & keys even if initial cut name not covered by TA */
 	bool secured = !is_insecured;
 	int ret = kr_zonecut_find_cached(req->ctx, &cut_found, requested_name,
-					 qry->timestamp.tv_sec, &secured);
+					 qry, &secured);
 	if (ret == kr_error(ENOENT)) {
 		/* No cached cut found, start from SBELT
 		 * and issue priming query. */
@@ -595,6 +598,7 @@ static int answer_finalize(struct kr_request *request, int state)
 	 * Be conservative.  Primary approach: check ranks of all RRs in wire.
 	 * Only "negative answers" need special handling. */
 	bool secure = (last != NULL); /* suspicious otherwise */
+	VERBOSE_MSG(NULL, "AD: secure (start)\n");
 	if (last && (last->flags.STUB)) {
 		secure = false; /* don't trust forwarding for now */
 	}
@@ -616,6 +620,7 @@ static int answer_finalize(struct kr_request *request, int state)
 		}
 	}
 
+	VERBOSE_MSG(NULL, "AD: secure (between ANS and AUTH)\n");
 	/* Write authority records. */
 	if (answer->current < KNOT_AUTHORITY) {
 		knot_pkt_begin(answer, KNOT_AUTHORITY);
@@ -642,6 +647,7 @@ static int answer_finalize(struct kr_request *request, int state)
 
 	/* AD: "negative answers" need more handling. */
 	if (last && secure) {
+		VERBOSE_MSG(NULL, "AD: secure (1)\n");
 		if (kr_response_classify(answer) != PKT_NOERROR
 		    /* Additionally check for CNAME chains that "end in NODATA",
 		     * as those would also be PKT_NOERROR. */
@@ -717,6 +723,7 @@ int kr_resolve_begin(struct kr_request *request, struct kr_context *ctx, knot_pk
 	array_init(request->additional);
 	array_init(request->answ_selected);
 	array_init(request->auth_selected);
+	array_init(request->add_selected);
 	request->answ_validated = false;
 	request->auth_validated = false;
 
@@ -1246,6 +1253,7 @@ static int trust_chain_check(struct kr_request *request, struct kr_query *qry)
 
 /** @internal Check current zone cut status and credibility, spawn subrequests if needed. */
 static int zone_cut_check(struct kr_request *request, struct kr_query *qry, knot_pkt_t *packet)
+/* TODO: using cache on this point in this way just isn't nice; remove in time */
 {
 	/* Stub mode, just forward and do not solve cut. */
 	if (qry->flags.STUB) {
@@ -1429,7 +1437,11 @@ ns_election:
 		}
 		kr_nsrep_elect(qry, request->ctx);
 		if (qry->ns.score > KR_NS_MAX_SCORE) {
-			VERBOSE_MSG(qry, "=> no valid NS left\n");
+			if (!qry->zone_cut.nsset.root) {
+				VERBOSE_MSG(qry, "=> no NS with an address\n");
+			} else {
+				VERBOSE_MSG(qry, "=> no valid NS left\n");
+			}
 			ITERATE_LAYERS(request, qry, reset);
 			kr_rplan_pop(rplan, qry);
 			return KR_STATE_PRODUCE;

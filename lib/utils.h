@@ -121,9 +121,10 @@ struct ranked_rr_array_entry {
 	uint32_t qry_uid;
 	uint8_t rank; /**< enum kr_rank */
 	uint8_t revalidation_cnt;
-	bool cached;  /**< whether it has been stashed to cache already */
-	bool yielded;
-	bool to_wire; /**< whether to be put into the answer */
+	bool cached : 1;  /**< whether it has been stashed to cache already */
+	bool yielded : 1;
+	bool to_wire : 1; /**< whether to be put into the answer */
+	bool expiring : 1; /**< low remaining TTL; see is_expiring; only used in cache ATM */
 	knot_rrset_t *rr;
 };
 typedef struct ranked_rr_array_entry ranked_rr_array_entry_t;
@@ -343,3 +344,34 @@ static inline char *kr_straddr(const struct sockaddr *addr)
 KR_EXPORT
 uint64_t kr_now();
 
+/** Convert name from lookup format to wire.  See knot_dname_lf
+ *
+ * \note len bytes are read and len+1 are written with *normal* LF,
+ * 	 but it's also allowed that the final zero byte is omitted in LF.
+ * \return the number of bytes written (>0) or error code (<0)
+ */
+int knot_dname_lf2wire(knot_dname_t *dst, uint8_t len, const uint8_t *lf);
+
+/** Patched knot_dname_lf.  LF for "." has length zero instead of one, for consistency.
+ * (TODO: consistency?)
+ * \param add_wildcard append the wildcard label
+ * \note packet is always NULL
+ */
+static inline int kr_dname_lf(uint8_t *dst, const knot_dname_t *src, bool add_wildcard)
+{
+	int ret = knot_dname_lf(dst, src, NULL);
+	if (ret)
+		return ret;
+	int len = dst[0];
+	if (len == 1)
+		len = 0;
+	if (add_wildcard) {
+		if (len + 2 > KNOT_DNAME_MAXLEN)
+			return kr_error(ENOSPC);
+		dst[len + 1] = '*';
+		dst[len + 2] = '\0';
+		len += 2;
+	}
+	dst[0] = len;
+	return KNOT_EOK;
+};
