@@ -890,21 +890,19 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 	/* Different processing for network error */
 	struct kr_query *qry = array_tail(rplan->pending);
 	bool tried_serve_stale = (qry->flags.SERVE_STALE);
+	bool tried_tcp = (qry->flags.TCP);
 	/* Check overall resolution time */
 	if (resolution_time_exceeded(qry, kr_now())) {
 		if (tried_serve_stale) {
 			return KR_STATE_FAIL;
 		}
 		qry->flags.SERVE_STALE = true;
+		qry->flags.TCP = false;
 		return KR_STATE_PRODUCE;
 	}
-	bool tried_tcp = (qry->flags.TCP);
 	if (!packet || packet->size == 0) {
-		if (tried_serve_stale)
+		if (tried_tcp) {
 			request->state = KR_STATE_FAIL;
-		else if (tried_tcp) {
-			qry->flags.SERVE_STALE = true;
-			qry->flags.TCP = false;
 		} else {
 			qry->flags.TCP = true;
 		}
@@ -943,10 +941,6 @@ int kr_resolve_consume(struct kr_request *request, const struct sockaddr *src, k
 		return KR_STATE_PRODUCE; /* Requery */
 	} else if (qry->flags.RESOLVED) {
 		kr_rplan_pop(rplan, qry);
-	} else if (!tried_serve_stale && (qry->flags.SERVE_STALE)) {
-		/* We have not received any answer form upstream both for udp and tcp,
-		 * try to retrieve stale records from cache. */
-		return KR_STATE_PRODUCE;
 	} else if (!tried_tcp && (qry->flags.TCP)) {
 		return KR_STATE_PRODUCE; /* Requery over TCP */
 	} else { /* Clear query flags for next attempt */
