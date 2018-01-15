@@ -216,7 +216,7 @@ int32_t get_new_ttl(const struct entry_h *entry, const struct kr_query *qry,
 		diff = 0;
 	}
 	int32_t res = entry->ttl - diff;
-	if (res < 0 && owner && false/*qry->flags.SERVE_STALE*/) {
+	if (res < 0 && owner && qry->flags.SERVE_STALE) {
 		/* Stale-serving decision.  FIXME: modularize or make configurable, etc. */
 		if (res + 3600 * 24 > 0) {
 			VERBOSE_MSG(qry, "stale TTL accepted: %d -> 1\n", (int)res);
@@ -304,6 +304,7 @@ int cache_peek(kr_layer_t *ctx, knot_pkt_t *pkt)
 	struct kr_query *qry = req->current_query;
 
 	if (ctx->state & (KR_STATE_FAIL|KR_STATE_DONE) || qry->flags.NO_CACHE
+	    || (qry->flags.CACHE_TRIED && !qry->flags.SERVE_STALE)
 	    || qry->stype == KNOT_RRTYPE_RRSIG /* LATER: some other behavior for this STYPE? */
 	    || qry->sclass != KNOT_CLASS_IN) {
 		return ctx->state; /* Already resolved/failed or already tried, etc. */
@@ -325,7 +326,7 @@ static int cache_peek_real(kr_layer_t *ctx, knot_pkt_t *pkt)
 	/* ATM cache only peeks for qry->sname and that would be useless
 	 * to repeat on every iteration, so disable it from now on.
 	 * LATER(optim.): assist with more precise QNAME minimization. */
-	qry->flags.NO_CACHE = true;
+	qry->flags.CACHE_TRIED = true;
 
 	struct key k_storage, *k = &k_storage;
 	if (!check_dname_for_lf(qry->sname)) {

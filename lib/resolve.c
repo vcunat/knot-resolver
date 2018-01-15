@@ -1335,8 +1335,7 @@ int kr_resolve_produce(struct kr_request *request, struct sockaddr **dst, int *t
 
 	/* STUB */
 	if (qry->flags.SERVE_STALE) {
-		VERBOSE_MSG(qry, "=> STALE SERVE condition detected, fail\n");
-		return KR_STATE_FAIL;
+		VERBOSE_MSG(qry, "=> STALE SERVE condition detected\n");
 	}
 
 	if (qry->deferred != NULL) {

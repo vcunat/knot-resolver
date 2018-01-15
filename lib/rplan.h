@@ -63,6 +63,7 @@ struct kr_qflags {
 	bool DNS64_MARK : 1;	 /**< Internal mark for dns64 module. */
 	bool SERVE_STALE : 1;	 /**< There was no response from upstream;
 				  * Try to retrieve stale records from cache. */
+	bool CACHE_TRIED : 1;    /**< Internal to cache module. */
 };
 
 /** Combine flags together.  This means set union for simple flags. */
