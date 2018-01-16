@@ -209,7 +209,7 @@ struct kr_query {
 	uint32_t secret;
 	uint16_t fails;
 	uint16_t reorder;
-	uint64_t creation_time_mono;
+	uint64_t deadline_mono;
 	uint64_t timestamp_mono;
 	struct timeval timestamp;
 	struct kr_zonecut zone_cut;

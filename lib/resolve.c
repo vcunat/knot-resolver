@@ -872,8 +872,7 @@ static void update_nslist_score(struct kr_request *request, struct kr_query *qry
 
 bool resolution_time_exceeded(struct kr_query *qry, uint64_t now)
 {
-	uint64_t resolving_time = now - qry->creation_time_mono;
-	if (resolving_time > KR_RESOLVE_TIME_LIMIT) {
+	if (qry->deadline_mono < now) {
 		WITH_VERBOSE {
 			VERBOSE_MSG(qry, "query resolution time limit exceeded\n");
 		}

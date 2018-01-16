@@ -87,8 +87,8 @@ struct kr_query {
 	uint32_t secret;
 	uint16_t fails;
 	uint16_t reorder; /**< Seed to reorder (cached) RRs in answer or zero. */
-	uint64_t creation_time_mono; /* The time of query's creation (milliseconds).
-				 * Or time of creation of an oldest
+	uint64_t deadline_mono;	/**< Per-query resolution time limit.
+				 * Or resolution time limit of an oldest
 				 * ancestor if it is a subquery. */
 	uint64_t timestamp_mono; /**< Time of query created or time of
 	                           * query to upstream resolver (milliseconds). */
