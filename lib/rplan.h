@@ -79,7 +79,7 @@ void kr_qflags_clear(struct kr_qflags *fl1, struct kr_qflags fl2);
  */
 struct kr_query {
 	struct kr_query *parent;
-	knot_dname_t *sname;
+	knot_dname_t *sname; /**< The name to resolve - lower-cased, uncompressed. */
 	uint16_t stype;
 	uint16_t sclass;
 	uint16_t id;
@@ -99,6 +99,7 @@ struct kr_query {
 	uint32_t uid; /**< Query iteration number, unique within the kr_rplan. */
 	/** Pointer to the query that originated this one because of following a CNAME (or NULL). */
 	struct kr_query *cname_parent;
+	struct kr_request *request; /**< Parent resolution request. */
 };
 
 /** @cond internal Array of queries. */
@@ -188,6 +189,13 @@ bool kr_rplan_satisfies(struct kr_query *closure, const knot_dname_t *name, uint
 /** Return last resolved query. */
 KR_EXPORT KR_PURE
 struct kr_query *kr_rplan_resolved(struct kr_rplan *rplan);
+
+/**
+  * Return last query (either currently being solved or last resolved).
+  * This is necessary to retrieve the last query in case of resolution failures (e.g. time limit reached).
+  */
+KR_EXPORT KR_PURE
+struct kr_query *kr_rplan_last(struct kr_rplan *rplan);
 
 /** Return query predecessor. */
 KR_EXPORT KR_PURE

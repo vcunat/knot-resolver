@@ -158,12 +158,13 @@ void stash_pkt(const knot_pkt_t *pkt, const struct kr_query *qry,
 	memcpy(eh->data, &pkt_size, sizeof(pkt_size));
 	memcpy(eh->data + sizeof(pkt_size), pkt->wire, pkt_size);
 
-	WITH_VERBOSE {
-		VERBOSE_MSG(qry, "=> stashed packet: rank 0%0.2o, TTL %d, ",
-				eh->rank, eh->ttl);
-		kr_rrtype_print(pkt_type, "", " ");
-		kr_dname_print(owner, "", " ");
-		kr_log_verbose("(%d B)\n", (int)val_new_entry.len);
+	WITH_VERBOSE(qry) {
+		auto_free char *type_str = kr_rrtype_text(pkt_type),
+			*owner_str = kr_dname_text(owner);
+		VERBOSE_MSG(qry, "=> stashed packet: rank 0%.2o, TTL %d, "
+				"%s %s (%d B)\n",
+				eh->rank, eh->ttl,
+				type_str, owner_str, (int)val_new_entry.len);
 	}
 }
 
@@ -186,8 +187,9 @@ int answer_from_pkt(kr_layer_t *ctx, knot_pkt_t *pkt, uint16_t type,
 	memcpy(pkt->wire, eh->data + 2, pkt_len);
 	pkt->size = pkt_len;
 	int ret = knot_pkt_parse(pkt, 0);
-	if (ret == KNOT_EFEWDATA) {
-		return kr_error(ENOENT); /* LATER(opt): avoid stashing such packets */
+	if (ret == KNOT_EFEWDATA || ret == KNOT_EMALF) {
+		return kr_error(ENOENT);
+		/* LATER(opt): try harder to avoid stashing such packets */
 	}
 	if (ret != KNOT_EOK) {
 		assert(!ret);
@@ -230,7 +232,7 @@ int answer_from_pkt(kr_layer_t *ctx, knot_pkt_t *pkt, uint16_t type,
 		qry->flags.DNSSEC_WANT = false;
 	}
 	qry->flags.DNSSEC_OPTOUT = eh->has_optout;
-	VERBOSE_MSG(qry, "=> satisfied by exact packet: rank 0%0.2o, new TTL %d\n",
+	VERBOSE_MSG(qry, "=> satisfied by exact packet: rank 0%.2o, new TTL %d\n",
 			eh->rank, new_ttl);
 	return kr_ok();
 }

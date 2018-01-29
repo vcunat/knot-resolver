@@ -19,6 +19,7 @@
  */
 
 #include "lib/cache/impl.h"
+#include "lib/utils.h"
 
 
 /** Given a valid entry header, find its length (i.e. offset of the next entry).
@@ -121,6 +122,7 @@ int entry_h_splice(
 	const knot_dname_t *owner/*log only*/,
 	const struct kr_query *qry, struct kr_cache *cache)
 {
+	static const knot_db_val_t VAL_EMPTY = { NULL, 0 };
 	const bool ok = val_new_entry && val_new_entry->len > 0;
 	if (!ok) {
 		assert(!EINVAL);
@@ -128,11 +130,11 @@ int entry_h_splice(
 	}
 
 	/* Find the whole entry-set and the particular entry within. */
-	knot_db_val_t val_orig_all = { }, val_orig_entry = { };
+	knot_db_val_t val_orig_all = VAL_EMPTY, val_orig_entry = VAL_EMPTY;
 	const struct entry_h *eh_orig = NULL;
 	if (!kr_rank_test(rank, KR_RANK_SECURE) || ktype == KNOT_RRTYPE_NS) {
 		int ret = cache_op(cache, read, &key, &val_orig_all, 1);
-		if (ret) val_orig_all = (knot_db_val_t){ };
+		if (ret) val_orig_all = VAL_EMPTY;
 		val_orig_entry = val_orig_all;
 		switch (entry_h_seek(&val_orig_entry, type)) {
 		case 0:
@@ -145,7 +147,7 @@ int entry_h_splice(
 				}
 			} /* otherwise fall through */
 		default:
-			val_orig_entry = val_orig_all = (knot_db_val_t){};
+			val_orig_entry = val_orig_all = VAL_EMPTY;
 		case -ENOENT:
 			val_orig_entry.len = 0;
 			break;
@@ -164,17 +166,18 @@ int entry_h_splice(
 		int32_t old_ttl = get_new_ttl(eh_orig, qry, NULL, 0);
 		if (old_ttl > 0 && !is_expiring(old_ttl, eh_orig->ttl)
 		    && rank <= eh_orig->rank) {
-			WITH_VERBOSE {
-				VERBOSE_MSG(qry, "=> not overwriting ");
-				kr_rrtype_print(type, "", " ");
-				kr_dname_print(owner, "", "\n");
+			WITH_VERBOSE(qry) {
+				auto_free char *type_str = kr_rrtype_text(type),
+					*owner_str = kr_dname_text(owner);
+				VERBOSE_MSG(qry, "=> not overwriting %s %s\n",
+						type_str, owner_str);
 			}
 			return kr_error(EEXIST);
 		}
 	}
 
 	/* LATER: enable really having multiple entries. */
-	val_orig_all = val_orig_entry = (knot_db_val_t){ };
+	val_orig_all = val_orig_entry = VAL_EMPTY;
 
 	/* Obtain new storage from cache.
 	 * Note: this does NOT invalidate val_orig_all.data.

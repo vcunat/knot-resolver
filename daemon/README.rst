@@ -1,5 +1,5 @@
 ************************
-Knot DNS Resolver daemon 
+Knot DNS Resolver daemon
 ************************
 
 The server is in the `daemon` directory, it works out of the box without any configuration.
@@ -22,9 +22,12 @@ To enable it, you need to provide trusted root keys. Bootstrapping of the keys i
    $ kresd -k root-new.keys # File for root keys
    [ ta ] keyfile 'root-new.keys': doesn't exist, bootstrapping
    [ ta ] Root trust anchors bootstrapped over https with pinned certificate.
-          You may want to verify them manually, as described on:
-          https://data.iana.org/root-anchors/old/draft-icann-dnssec-trust-anchor.html#sigs
-   [ ta ] next refresh for . in 23.912361111111 hours
+          You SHOULD verify them manually against original source:
+          https://www.iana.org/dnssec/files
+   [ ta ] Current root trust anchors are:
+   . 0 IN DS 19036 8 2 49AAC11D7B6F6446702E54A1607371607A1A41855200FD2CE1CDDE32F24E8FB5
+   . 0 IN DS 20326 8 2 E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D
+   [ ta ] next refresh for . in 24 hours
 
 Alternatively, you can set it in configuration file with ``trust_anchors.file = 'root.keys'``. If the file doesn't exist, it will be automatically populated with root keys validated using root anchors retrieved over HTTPS.
 
@@ -58,6 +61,8 @@ The root anchors bootstrap may fail for various reasons, in this case you need t
 
 You've just enabled DNSSEC!
 
+.. note:: Bootstrapping and automatic update need write access to keyfile direcory. If you want to manage root anchors manually you should use ``trust_anchors.add_file('root.keys', true)``.
+
 CLI interface
 =============
 
@@ -65,7 +70,7 @@ The daemon features a CLI interface, type ``help()`` to see the list of availabl
 
 .. code-block:: bash
 
-   $ kresd /var/run/knot-resolver
+   $ kresd /var/cache/knot-resolver
    [system] started in interactive mode, type 'help()'
    > cache.count()
    53
@@ -155,7 +160,7 @@ comfortable in the current working directory.
 
 .. code-block:: sh
 
-	$ kresd /var/run/kresd
+	$ kresd /var/cache/knot-resolver
 
 And you're good to go for most use cases! If you want to use modules or configure daemon behavior, read on.
 
@@ -264,7 +269,7 @@ to download cache from parent, to avoid cold-cache start.
 
 	if cache.count() == 0 then
 		-- download cache from parent
-		http.request { 
+		http.request {
 			url = 'http://parent/cache.mdb',
 			sink = ltn12.sink.file(io.open('cache.mdb', 'w'))
 		}
@@ -272,10 +277,10 @@ to download cache from parent, to avoid cold-cache start.
 		cache.size = 100*MB
 	end
 
-Events and services
+Asynchronous events
 ^^^^^^^^^^^^^^^^^^^
 
-The Lua supports a concept called closures_, this is extremely useful for scripting actions upon various events,
+Lua supports a concept called closures_, this is extremely useful for scripting actions upon various events,
 say for example - prune the cache within minute after loading, publish statistics each 5 minutes and so on.
 Here's an example of an anonymous function with :func:`event.recurrent()`:
 
@@ -312,41 +317,25 @@ as a parameter, but it's not very useful as you don't have any *non-global* way 
 Another type of actionable event is activity on a file descriptor. This allows you to embed other
 event loops or monitor open files and then fire a callback when an activity is detected.
 This allows you to build persistent services like HTTP servers or monitoring probes that cooperate
-well with the daemon internal operations.
+well with the daemon internal operations. See :func:`event.socket()`
 
-For example a simple web server that doesn't block:
+
+File watchers are possible with :func:`worker.coroutine()` and cqueues_, see the cqueues documentation for more information.
 
 .. code-block:: lua
 
-   local server, headers = require 'http.server', require 'http.headers'
-   local cqueues = require 'cqueues'
-   -- Start socket server
-   local s = server.listen { host = 'localhost', port = 8080 }
-   assert(s:listen())
-   -- Compose per-request coroutine
-   local cq = cqueues.new()
-   cq:wrap(function()
-      s:run(function(stream)
-         -- Create response headers
-         local headers = headers.new()
-         headers:append(':status', '200')
-         headers:append('connection', 'close')
-         -- Send response and close connection
-         assert(stream:write_headers(headers, false))
-         assert(stream:write_chunk('OK', true))
-         stream:shutdown()
-         stream.connection:shutdown()
-      end)
-      s:close()
-   end)
-   -- Hook to socket watcher
-   event.socket(cq:pollfd(), function (ev, status, events)
-      cq:step(0)
-   end)
+  local notify = require('cqueues.notify')
+  local watcher = notify.opendir('/etc')
+  watcher:add('hosts')
 
-* File watchers
-
-.. note:: Work in progress, come back later!
+  -- Watch changes to /etc/hosts
+  worker.coroutine(function ()
+    for flags, name in watcher:changes() do
+      for flag in notify.flags(flags) do
+        print(name, notify[flag])
+      end
+    end
+  end)
 
 .. _closures: https://www.lua.org/pil/6.1.html
 
@@ -386,7 +375,7 @@ Environment
    If called with a parameter, it will change kresd's directory for
    looking up the dynamic modules.  If called without a parameter, it
    will return kresd's modules directory.
-   
+
 .. function:: verbose(true | false)
 
    :return: Toggle verbose logging.
@@ -450,14 +439,25 @@ Environment
       > user('root')
       Operation not permitted
 
-.. function:: resolve(qname, qtype[, qclass = kres.class.IN, options = 0, callback = nil])
+.. function:: resolve(name, type[, class = kres.class.IN, options = {}, finish = nil])
 
-   :param string qname: Query name (e.g. 'com.')
-   :param number qtype: Query type (e.g. ``kres.type.NS``)
-   :param number qclass: Query class *(optional)* (e.g. ``kres.class.IN``)
+   :param string name: Query name (e.g. 'com.')
+   :param number type: Query type (e.g. ``kres.type.NS``)
+   :param number class: Query class *(optional)* (e.g. ``kres.class.IN``)
    :param number options: Resolution options (see query flags)
-   :param function callback: Callback to be executed when resolution completes (e.g. `function cb (pkt, req) end`). The callback gets a packet containing the final answer and doesn't have to return anything.
+   :param function finish: Callback to be executed when resolution completes (e.g. `function cb (pkt, req) end`). The callback gets a packet containing the final answer and doesn't have to return anything.
    :return: boolean
+
+   The function can also be executed with a table of arguments instead. This is useful if you'd like to skip some arguments, for example:
+
+   .. code-block:: lua
+
+      resolve {
+         name = 'example.com',
+         type = kres.type.AAAA,
+         init = function (req)
+         end,
+      }
 
    Example:
 
@@ -594,6 +594,8 @@ For when listening on ``localhost`` just doesn't cut it.
       100
       > net.tcp_pipeline(50)
       50
+
+.. _tls-server-config:
 
 .. function:: net.tls([cert_path], [key_path])
 
@@ -839,7 +841,7 @@ daemons or manipulated from other processes, making for example synchronised loa
 
    Close the cache.
 
-   .. note:: This may or may not clear the cache, depending on the used backend. See :func:`cache.clear()`. 
+   .. note:: This may or may not clear the cache, depending on the used backend. See :func:`cache.clear()`.
 
 .. function:: cache.stats()
 
@@ -944,7 +946,7 @@ daemons or manipulated from other processes, making for example synchronised loa
 Timers and events
 ^^^^^^^^^^^^^^^^^
 
-The timer represents exactly the thing described in the examples - it allows you to execute closures 
+The timer represents exactly the thing described in the examples - it allows you to execute closures
 after specified time, or event recurrent events. Time is always described in milliseconds,
 but there are convenient variables that you can use - ``sec, minute, hour``.
 For example, ``5 * hour`` represents five hours, or 5*60*60*100 milliseconds.
@@ -966,14 +968,14 @@ For example, ``5 * hour`` represents five hours, or 5*60*60*100 milliseconds.
 
    :return: event id
 
-   Similar to :func:`event.after()`, periodically execute function after ``interval`` passes. 
+   Similar to :func:`event.after()`, periodically execute function after ``interval`` passes.
 
    Example:
 
    .. code-block:: lua
 
       msg_count = 0
-      event.recurrent(5 * sec, function(e) 
+      event.recurrent(5 * sec, function(e)
          msg_count = msg_count + 1
          print('Hi #'..msg_count)
       end)
@@ -1031,11 +1033,38 @@ notifications for daemon.
       end)
       e.cancel(e)
 
-Map over multiple forks
-^^^^^^^^^^^^^^^^^^^^^^^
+Asynchronous function execution
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The `event` package provides a very basic mean for non-blocking execution - it allows running code when activity on a file descriptor is detected, and when a certain amount of time passes. It doesn't however provide an easy to use abstraction for non-blocking I/O. This is instead exposed through the `worker` package (if `cqueues` Lua package is installed in the system).
+
+.. function:: worker.coroutine(function)
+
+   Start a new coroutine with given function (closure). The function can do I/O or run timers without blocking the main thread. See cqueues_ for documentation of possible operations and synchronisation primitives. The main limitation is that you can't wait for a finish of a coroutine from processing layers, because it's not currently possible to suspend and resume execution of processing layers.
+
+   Example:
+
+   .. code-block:: lua
+
+      worker.coroutine(function ()
+        for i = 0, 10 do
+          print('executing', i)
+          worker.sleep(1)
+        end
+      end)
+
+.. function:: worker.sleep(seconds)
+
+   Pause execution of current function (asynchronously if running inside a worker coroutine).
 
 When daemon is running in forked mode, each process acts independently. This is good because it reduces software complexity and allows for runtime scaling, but not ideal because of additional operational burden.
 For example, when you want to add a new policy, you'd need to add it to either put it in the configuration, or execute command on each process independently. The daemon simplifies this by promoting process group leader which is able to execute commands synchronously over forks.
+
+   Example:
+
+   .. code-block:: lua
+
+      worker.sleep(1)
 
 .. function:: map(expr)
 
@@ -1155,5 +1184,6 @@ Example:
 .. _LuaJIT: http://luajit.org/luajit.html
 .. _luasec: https://luarocks.org/modules/brunoos/luasec
 .. _luasocket: https://luarocks.org/modules/luarocks/luasocket
+.. _cqueues: https://25thandclement.com/~william/projects/cqueues.html
 .. _`real process managers`: http://blog.crocodoc.com/post/48703468992/process-managers-the-good-the-bad-and-the-ugly
 .. _`systemd socket activation`: http://0pointer.de/blog/projects/socket-activation.html

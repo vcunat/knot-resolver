@@ -28,12 +28,14 @@
 #define KR_PURE __attribute__((__pure__))
 #define KR_NORETURN __attribute__((__noreturn__))
 #define KR_COLD __attribute__((__cold__))
+#define KR_PRINTF(n) __attribute__((format (printf, n, (n+1))))
 #else
 #define KR_EXPORT
 #define KR_CONST
 #define KR_PURE
 #define KR_NORETURN
 #define KR_COLD
+#define KR_PRINTF(n)
 #endif
 
 #ifndef uint /* Redefining typedef is a C11 feature. */
@@ -47,7 +49,7 @@ typedef unsigned int uint;
 #define kr_ok() 0
 /* Mark as cold to mark all branches as unlikely. */
 static inline int KR_COLD kr_error(int x) {
-	return -abs(x);
+    return x <= 0 ? x : -x;
 }
 #define kr_strerror(x) strerror(abs(x))
 

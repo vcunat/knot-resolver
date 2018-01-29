@@ -53,9 +53,10 @@ static int nsec3_parameters(dnssec_nsec3_params_t *params, const knot_rrset_t *n
 
 	/* Every NSEC3 RR contains data from NSEC3PARAMS. */
 	const size_t SALT_OFFSET = 5; /* First 5 octets contain { Alg, Flags, Iterations, Salt length } */
-	dnssec_binary_t rdata = {0, };
-	rdata.size = SALT_OFFSET + (size_t) knot_nsec3_salt_length(&nsec3->rrs, 0);
-	rdata.data = knot_rdata_data(rr);
+	dnssec_binary_t rdata = {
+		.size = SALT_OFFSET + (size_t) knot_nsec3_salt_length(&nsec3->rrs, 0),
+		.data = knot_rdata_data(rr),
+	};
 	if (rdata.size > knot_rdata_rdlen(rr))
 		return kr_error(EMSGSIZE);
 
@@ -81,9 +82,10 @@ static int hash_name(dnssec_binary_t *hash, const dnssec_nsec3_params_t *params,
 	if (!name)
 		return kr_error(EINVAL);
 
-	dnssec_binary_t dname = {0, };
-	dname.size = knot_dname_size(name);
-	dname.data = (uint8_t *) name;
+	dnssec_binary_t dname = {
+		.size = knot_dname_size(name),
+		.data = (uint8_t *) name,
+	};
 
 	int ret = dnssec_nsec3_hash(&dname, params, hash);
 	if (ret != DNSSEC_EOK) {
@@ -128,11 +130,10 @@ static int closest_encloser_match(int *flags, const knot_rrset_t *nsec3,
 {
 	assert(flags && nsec3 && name && skipped);
 
-	dnssec_binary_t owner_hash = {0, };
 	uint8_t hash_data[MAX_HASH_BYTES] = {0, };
-	owner_hash.data = hash_data;
-	dnssec_nsec3_params_t params = {0, };
-	dnssec_binary_t name_hash = {0, };
+	dnssec_binary_t owner_hash = { 0, hash_data };
+	dnssec_nsec3_params_t params = { 0, };
+	dnssec_binary_t name_hash = { 0, };
 
 	int ret = read_owner_hash(&owner_hash, MAX_HASH_BYTES, nsec3);
 	if (ret != 0) {
@@ -197,11 +198,10 @@ static int covers_name(int *flags, const knot_rrset_t *nsec3, const knot_dname_t
 {
 	assert(flags && nsec3 && name);
 
-	dnssec_binary_t owner_hash = {0, };
-	uint8_t hash_data[MAX_HASH_BYTES] = {0, };
-	owner_hash.data = hash_data;
-	dnssec_nsec3_params_t params = {0, };
-	dnssec_binary_t name_hash = {0, };
+	uint8_t hash_data[MAX_HASH_BYTES] = { 0, };
+	dnssec_binary_t owner_hash = { 0, hash_data };
+	dnssec_nsec3_params_t params = { 0, };
+	dnssec_binary_t name_hash = { 0, };
 
 	int ret = read_owner_hash(&owner_hash, MAX_HASH_BYTES, nsec3);
 	if (ret != 0) {
@@ -222,7 +222,7 @@ static int covers_name(int *flags, const knot_rrset_t *nsec3, const knot_dname_t
 	uint8_t *next_hash = NULL;
 	knot_nsec3_next_hashed(&nsec3->rrs, 0, &next_hash, &next_size);
 
-	if ((owner_hash.size == next_size) && (name_hash.size == next_size)) {
+	if ((next_size > 0) && (owner_hash.size == next_size) && (name_hash.size == next_size)) {
 		/* All hash lengths must be same. */
 		const uint8_t *ownrd = owner_hash.data;
 		const uint8_t *nextd = next_hash;
@@ -299,17 +299,16 @@ static bool has_optout(const knot_rrset_t *nsec3)
  * @param flags Flags to be set according to check outcome.
  * @param nsec3 NSEC3 RR.
  * @param name  Name to be checked.
- * @return      0 or error code.
+ * @return      0 if matching, >0 if not (abs(ENOENT)), or error code (<0).
  */
-static int matches_name(int *flags, const knot_rrset_t *nsec3, const knot_dname_t *name)
+static int matches_name(const knot_rrset_t *nsec3, const knot_dname_t *name)
 {
-	assert(flags && nsec3 && name);
+	assert(nsec3 && name);
 
-	dnssec_binary_t owner_hash = {0, };
-	uint8_t hash_data[MAX_HASH_BYTES] = {0, };
-	owner_hash.data = hash_data;
-	dnssec_nsec3_params_t params = {0, };
-	dnssec_binary_t name_hash = {0, };
+	uint8_t hash_data[MAX_HASH_BYTES] = { 0, };
+	dnssec_binary_t owner_hash = { 0, hash_data };
+	dnssec_nsec3_params_t params = { 0, };
+	dnssec_binary_t name_hash = { 0, };
 
 	int ret = read_owner_hash(&owner_hash, MAX_HASH_BYTES, nsec3);
 	if (ret != 0) {
@@ -328,8 +327,9 @@ static int matches_name(int *flags, const knot_rrset_t *nsec3, const knot_dname_
 
 	if ((owner_hash.size == name_hash.size) &&
 	    (memcmp(owner_hash.data, name_hash.data, owner_hash.size) == 0)) {
-		*flags |= FLG_NAME_MATCHED;
 		ret = kr_ok();
+	} else {
+		ret = abs(ENOENT);
 	}
 
 fail:
@@ -390,6 +390,18 @@ static int closest_encloser_proof(const knot_pkt_t *pkt,
 		if (rrset->type != KNOT_RRTYPE_NSEC3) {
 			continue;
 		}
+		/* Also skip the NSEC3-to-match an ancestor of sname if it's
+		 * a parent-side delegation, as that would mean the owner
+		 * does not really exist (authoritatively in this zone,
+		 * even in case of opt-out).
+		 */
+		uint8_t *bm = NULL;
+		uint16_t bm_size;
+		knot_nsec3_bitmap(&rrset->rrs, 0, &bm, &bm_size);
+		if (kr_nsec_children_in_zone_check(bm, bm_size) != 0) {
+			continue; /* no fatal errors from bad RRs */
+		}
+		/* Match the NSEC3 to sname or one of its ancestors. */
 		unsigned skipped = 0;
 		flags = 0;
 		int ret = closest_encloser_match(&flags, rrset, sname, &skipped);
@@ -400,6 +412,7 @@ static int closest_encloser_proof(const knot_pkt_t *pkt,
 			continue;
 		}
 		matching = rrset;
+		/* Construct the next closer name and try to cover it. */
 		--skipped;
 		next_closer = sname;
 		for (unsigned j = 0; j < skipped; ++j) {
@@ -512,81 +525,36 @@ int kr_nsec3_name_error_response_check(const knot_pkt_t *pkt, knot_section_t sec
 }
 
 /**
- * Checks whether supplied NSEC3 RR matches the supplied name and type.
- * @param flags Flags to be set according to check outcome.
- * @param nsec3 NSEC3 RR.
- * @param name  Name to be checked.
- * @param type  Type to be checked.
- * @return      0 or error code.
- */
-static int matches_name_and_type(int *flags, const knot_rrset_t *nsec3,
-                                const knot_dname_t *name, uint16_t type)
-{
-	assert(flags && nsec3 && name);
-
-	int ret = matches_name(flags, nsec3, name);
-	if (ret != 0) {
-		return ret;
-	}
-
-	if (!(*flags & FLG_NAME_MATCHED)) {
-		return kr_ok();
-	}
-
-	uint8_t *bm = NULL;
-	uint16_t bm_size;
-	knot_nsec3_bitmap(&nsec3->rrs, 0, &bm, &bm_size);
-	if (!bm) {
-		return kr_error(EINVAL);
-	}
-
-	if (!kr_nsec_bitmap_contains_type(bm, bm_size, type)) {
-		*flags |= FLG_TYPE_BIT_MISSING;
-		if (type == KNOT_RRTYPE_CNAME) {
-			*flags |= FLG_CNAME_BIT_MISSING;
-		}
-	}
-
-	if ((type != KNOT_RRTYPE_CNAME) &&
-	    !kr_nsec_bitmap_contains_type(bm, bm_size, KNOT_RRTYPE_CNAME)) {
-		*flags |= FLG_CNAME_BIT_MISSING;
-	}
-
-	return kr_ok();
-}
-
-/**
- * No data response check, no DS (RFC5155 7.2.3).
+ * Search the packet section for a matching NSEC3 with nodata-proving bitmap.
  * @param pkt        Packet structure to be processed.
  * @param section_id Packet section to be processed.
  * @param sname      Name to be checked.
  * @param stype      Type to be checked.
  * @return           0 or error code.
+ * @note             This does NOT check the opt-out case if type is DS;
+ *                   see RFC 5155 8.6.
  */
-static int no_data_response_no_ds(const knot_pkt_t *pkt, knot_section_t section_id,
-                                  const knot_dname_t *sname, uint16_t stype)
+static int nodata_find(const knot_pkt_t *pkt, knot_section_t section_id,
+			const knot_dname_t *name, const uint16_t type)
 {
 	const knot_pktsection_t *sec = knot_pkt_section(pkt, section_id);
-	if (!sec || !sname) {
+	if (!sec || !name) {
 		return kr_error(EINVAL);
 	}
 
-	int flags;
 	for (unsigned i = 0; i < sec->count; ++i) {
-		const knot_rrset_t *rrset = knot_pkt_rr(sec, i);
-		if (rrset->type != KNOT_RRTYPE_NSEC3) {
+		const knot_rrset_t *nsec3 = knot_pkt_rr(sec, i);
+		/* Records causing any errors are simply skipped. */
+		if (nsec3->type != KNOT_RRTYPE_NSEC3
+		    || matches_name(nsec3, name) != kr_ok()) {
 			continue;
-		}
-		flags = 0;
-
-		int ret = matches_name_and_type(&flags, rrset, sname, stype);
-		if (ret != 0) {
-			return ret;
+			/* LATER(optim.): we repeatedly recompute the hash of `name` */
 		}
 
-		if ((flags & FLG_NAME_MATCHED) &&
-		    (flags & FLG_TYPE_BIT_MISSING) &&
-		    (flags & FLG_CNAME_BIT_MISSING)) {
+		uint8_t *bm = NULL;
+		uint16_t bm_size;
+		knot_nsec3_bitmap(&nsec3->rrs, 0, &bm, &bm_size);
+		if (kr_nsec_bitmap_nodata_check(bm, bm_size, type) == kr_ok()) {
 			return kr_ok();
 		}
 	}
@@ -610,38 +578,13 @@ static int matches_closest_encloser_wildcard(const knot_pkt_t *pkt, knot_section
 		return kr_error(EINVAL);
 	}
 
-	uint8_t wildcard[KNOT_DNAME_MAXLEN];
+	uint8_t wildcard[KNOT_DNAME_MAXLEN]; /**< the source of synthesis */
 	int ret = prepend_asterisk(wildcard, sizeof(wildcard), encloser);
 	if (ret < 0) {
 		return ret;
 	}
 	assert(ret >= 3);
-
-	int flags;
-	for (unsigned i = 0; i < sec->count; ++i) {
-		const knot_rrset_t *rrset = knot_pkt_rr(sec, i);
-		if (rrset->type != KNOT_RRTYPE_NSEC3) {
-			continue;
-		}
-		flags = 0;
-
-		int ret = matches_name_and_type(&flags, rrset, wildcard, stype);
-		if (ret != 0) {
-			return ret;
-		}
-
-		/* TODO -- The loop resembles no_data_response_no_ds() exept
-		 * the following condition.
-		 */
-		if ((flags & FLG_NAME_MATCHED) &&
-		    (flags & FLG_TYPE_BIT_MISSING) &&
-		    (flags & FLG_CNAME_BIT_MISSING)) {
-			/* rfc5155 8.7 */
-			return kr_ok();
-		}
-	}
-
-	return kr_error(ENOENT);
+	return nodata_find(pkt, section_id, wildcard, stype);
 }
 
 int kr_nsec3_wildcard_answer_response_check(const knot_pkt_t *pkt, knot_section_t section_id,
@@ -682,7 +625,7 @@ int kr_nsec3_no_data(const knot_pkt_t *pkt, knot_section_t section_id,
                      const knot_dname_t *sname, uint16_t stype)
 {
 	/* DS record may be also matched by an existing NSEC3 RR. */
-	int ret = no_data_response_no_ds(pkt, section_id, sname, stype);
+	int ret = nodata_find(pkt, section_id, sname, stype);
 	if (ret == 0) {
 		/* Satisfies RFC5155 8.5 and 8.6, both first paragraph. */
 		return ret;
@@ -733,10 +676,6 @@ int kr_nsec3_no_data(const knot_pkt_t *pkt, knot_section_t section_id,
 
 int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 {
-	int ret = kr_error(EINVAL);
-	int flags = 0;
-	uint8_t *bm = NULL;
-	uint16_t bm_size = 0;
 	const knot_pktsection_t *sec = knot_pkt_section(pkt, KNOT_AUTHORITY);
 	if (!sec) {
 		return kr_error(EINVAL);
@@ -749,8 +688,9 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 		if (ns->type != KNOT_RRTYPE_NS) {
 			continue;
 		}
+
+		int flags = 0;
 		bool nsec3_found = false;
-		flags = 0;
 		for (unsigned j = 0; j < sec->count; ++j) {
 			const knot_rrset_t *nsec3 = knot_pkt_rr(sec, j);
 			if (nsec3->type == KNOT_RRTYPE_DS) {
@@ -760,19 +700,14 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 				continue;
 			}
 			nsec3_found = true;
-			/* nsec3 found, check if owner name matches
-			 * the delegation name
-			 */
-			ret = matches_name(&flags, nsec3, ns->owner);
-			if (ret != 0) {
-				return kr_error(EINVAL);
-			}
-			if (!(flags & FLG_NAME_MATCHED)) {
-				/* nsec3 owner name does not match
-				 * the delegation name
-				 */
+			/* nsec3 found, check if owner name matches the delegation name.
+			 * Just skip in case of *any* errors. */
+			if (matches_name(nsec3, ns->owner) != kr_ok()) {
 				continue;
 			}
+
+			uint8_t *bm = NULL;
+			uint16_t bm_size = 0;
 			knot_nsec3_bitmap(&nsec3->rrs, 0, &bm, &bm_size);
 			if (!bm) {
 				return kr_error(EINVAL);
@@ -803,8 +738,8 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 		 */
 		const knot_dname_t *encloser_name = NULL;
 		const knot_rrset_t *covering_next_nsec3 = NULL;
-		ret = closest_encloser_proof(pkt, KNOT_AUTHORITY, ns->owner, &encloser_name,
-                                     NULL, &covering_next_nsec3);
+		int ret = closest_encloser_proof(pkt, KNOT_AUTHORITY, ns->owner,
+				&encloser_name, NULL, &covering_next_nsec3);
 		if (ret != 0) {
 			return kr_error(EINVAL);
 		}
@@ -821,11 +756,26 @@ int kr_nsec3_ref_to_unsigned(const knot_pkt_t *pkt)
 int kr_nsec3_matches_name_and_type(const knot_rrset_t *nsec3,
 				   const knot_dname_t *name, uint16_t type)
 {
-	int flags = 0;
-	int ret = matches_name_and_type(&flags, nsec3, name, type);
-	if (ret != kr_ok()) {
-		return ret;
+	/* It's not secure enough to just check a single bit for (some) other types,
+	 * but we don't (currently) only use this API for NS.  See RFC 6840 sec. 4.
+	 */
+	if (type != KNOT_RRTYPE_NS) {
+		assert(!EINVAL);
+		return kr_error(EINVAL);
 	}
-	return ((flags & (FLG_NAME_MATCHED | FLG_TYPE_BIT_MISSING)) != FLG_NAME_MATCHED) ?
-	       kr_error(ENOENT) : kr_ok();
+	int ret = matches_name(nsec3, name);
+	if (ret) {
+		return kr_error(ret);
+	}
+	uint8_t *bm = NULL;
+	uint16_t bm_size = 0;
+	knot_nsec3_bitmap(&nsec3->rrs, 0, &bm, &bm_size);
+	if (!bm) {
+		return kr_error(EINVAL);
+	}
+	if (kr_nsec_bitmap_contains_type(bm, bm_size, type)) {
+		return kr_ok();
+	} else {
+		return kr_error(ENOENT);
+	}
 }
