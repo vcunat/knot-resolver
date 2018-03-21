@@ -178,7 +178,7 @@ static int seed_file(const char *fname, char *buf, size_t buflen)
 {
 	auto_fclose FILE *fp = fopen(fname, "r");
 	if (!fp) {
-		return kr_error(EINVAL);
+		return kr_error(errno);
 	}
 	/* Disable buffering to conserve randomness but ignore failing to do so. */
 	setvbuf(fp, NULL, _IONBF, 0);
@@ -497,7 +497,7 @@ int kr_straddr_split(const char *addr, char *buf, size_t buflen, uint16_t *port)
 	memcpy(str, addr, addrlen); str[addrlen] = '\0';
 
 	int family = kr_straddr_family(str);
-	if (family == kr_error(EINVAL) || !inet_pton(family, str, &ss)) {
+	if (family < 0 || inet_pton(family, str, &ss) != 1) {
 		return kr_error(EINVAL);
 	}
 
@@ -523,7 +523,7 @@ int kr_straddr_join(const char *addr, uint16_t port, char *buf, size_t *buflen)
 
 	struct sockaddr_storage ss;
 	int family = kr_straddr_family(addr);
-	if (family == kr_error(EINVAL) || !inet_pton(family, addr, &ss)) {
+	if (family < 0 || inet_pton(family, addr, &ss) != 1) {
 		return kr_error(EINVAL);
 	}
 

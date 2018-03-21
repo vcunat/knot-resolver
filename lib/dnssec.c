@@ -79,11 +79,11 @@ static int validate_rrsig_rr(int *flags, int cov_labels,
 	}
 	/* bullet 5 */
 	if (knot_rrsig_sig_expiration(&rrsigs->rrs, sig_pos) < timestamp) {
-		return kr_error(EINVAL);
+		return kr_error(ESTALE);
 	}
 	/* bullet 6 */
 	if (knot_rrsig_sig_inception(&rrsigs->rrs, sig_pos) > timestamp) {
-		return kr_error(EINVAL);
+		return kr_error(ESTALE);
 	}
 	/* bullet 2 */
 	const knot_dname_t *signer_name = knot_rrsig_signer_name(&rrsigs->rrs, sig_pos);
@@ -94,7 +94,7 @@ static int validate_rrsig_rr(int *flags, int cov_labels,
 	{
 		int rrsig_labels = knot_rrsig_labels(&rrsigs->rrs, sig_pos);
 		if (rrsig_labels > cov_labels) {
-			return kr_error(EINVAL);
+			return kr_error(EILSEQ);
 		}
 		if (rrsig_labels < cov_labels) {
 			*flags |= FLG_WILDCARD_EXPANSION;
@@ -105,7 +105,7 @@ static int validate_rrsig_rr(int *flags, int cov_labels,
 	if ((!knot_dname_is_equal(keys->owner, signer_name)) ||
 	    (knot_dnskey_alg(&keys->rrs, key_pos) != knot_rrsig_algorithm(&rrsigs->rrs, sig_pos)) ||
 	    (keytag != knot_rrsig_key_tag(&rrsigs->rrs, sig_pos))) {
-		return kr_error(EINVAL);
+		return kr_error(ENOENT); /* no match */
 	}
 	/* bullet 8 */
 	/* Checked somewhere else. */
