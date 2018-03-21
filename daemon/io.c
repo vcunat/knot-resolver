@@ -466,7 +466,6 @@ int io_start_read(uv_handle_t *handle)
 	case UV_TCP:
 		return uv_read_start((uv_stream_t *)handle, &handle_getbuf, &tcp_recv);
 	default:
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 }

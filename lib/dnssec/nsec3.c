@@ -760,7 +760,6 @@ int kr_nsec3_matches_name_and_type(const knot_rrset_t *nsec3,
 	 * but we don't (currently) only use this API for NS.  See RFC 6840 sec. 4.
 	 */
 	if (type != KNOT_RRTYPE_NS) {
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 	int ret = matches_name(nsec3, name);

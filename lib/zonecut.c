@@ -351,7 +351,6 @@ static int fetch_secure_rrset(knot_rrset_t **rr, struct kr_cache *cache,
 	const struct kr_query *qry)
 {
 	if (!rr) {
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 	/* peek, check rank and TTL */

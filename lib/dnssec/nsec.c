@@ -552,7 +552,6 @@ int kr_nsec_matches_name_and_type(const knot_rrset_t *nsec,
 	 * but we don't (currently) only use this API for NS.  See RFC 6840 sec. 4.
 	 */
 	if (type != KNOT_RRTYPE_NS || !nsec || !name) {
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 	if (!knot_dname_is_equal(nsec->owner, name)) {

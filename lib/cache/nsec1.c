@@ -278,7 +278,6 @@ int nsec1_encloser(struct key *k, struct answer *ans,
 	const bool ok = k && ans && clencl_labels && cover_low_kwz && cover_hi_kwz
 			&& qry && cache;
 	if (!ok) {
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 	

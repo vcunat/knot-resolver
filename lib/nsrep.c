@@ -341,12 +341,7 @@ int kr_nsrep_copy_set(struct kr_nsrep *dst, const struct kr_nsrep *src)
 
 int kr_nsrep_sort(struct kr_nsrep *ns, kr_nsrep_lru_t *cache)
 {
-	if (!ns || !cache) {
-		assert(false);
-		return kr_error(EINVAL);
-	}
-
-	if (ns->addr[0].ip.sa_family == AF_UNSPEC) {
+	if (!ns || !cache || ns->addr[0].ip.sa_family == AF_UNSPEC) {
 		return kr_error(EINVAL);
 	}
 

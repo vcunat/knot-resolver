@@ -125,7 +125,6 @@ int entry_h_splice(
 	static const knot_db_val_t VAL_EMPTY = { NULL, 0 };
 	const bool ok = val_new_entry && val_new_entry->len > 0;
 	if (!ok) {
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 

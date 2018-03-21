@@ -614,7 +614,6 @@ static int to_wire_ensure_unique(ranked_rr_array_t *array, size_t index)
 {
 	bool ok = array && index < array->len;
 	if (!ok) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 
@@ -916,7 +915,6 @@ int knot_dname_lf2wire(knot_dname_t * const dst, uint8_t len, const uint8_t *lf)
 	knot_dname_t *d = dst; /* moving "cursor" as we write it out */
 	bool ok = d && (len == 0 || lf);
 	if (!ok) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 	/* we allow the final zero byte to be omitted */

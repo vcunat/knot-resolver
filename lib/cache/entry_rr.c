@@ -109,7 +109,6 @@ int entry2answer(struct answer *ans, int id,
 	if (ans->rrsets[id].set.rr || ans->rrsets[id].sig_rds.data
 	    || (type == KNOT_RRTYPE_NSEC && ans->nsec_v != 1)
 	    || (type == KNOT_RRTYPE_NSEC3 && ans->nsec_v != 3)) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 	/* Materialize the base RRset. */

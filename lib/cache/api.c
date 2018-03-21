@@ -677,7 +677,6 @@ static int stash_rrset(const ranked_rr_array_t *arr, int arr_i,
 	}
 	const knot_rrset_t *rr = entry->rr;
 	if (!rr) {
-		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
 	if (!check_dname_for_lf(rr->owner)) {
@@ -743,7 +742,6 @@ static int stash_rrset(const ranked_rr_array_t *arr, int arr_i,
 			return kr_ok();
 		}
 		if (!rr_sigs || !rr_sigs->rrs.rr_count || !rr_sigs->rrs.data) {
-			assert(!EINVAL);
 			return kr_error(EINVAL);
 		}
 		k->zlf_len = knot_dname_size(knot_rrsig_signer_name(&rr_sigs->rrs, 0)) - 1;

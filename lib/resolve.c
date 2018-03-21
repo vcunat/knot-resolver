@@ -526,7 +526,6 @@ static int write_extra_ranked_records(const ranked_rr_array_t *arr, knot_pkt_t *
 static int answer_padding(struct kr_request *request)
 {
 	if (!request || !request->answer || !request->ctx) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 	int32_t padding = request->ctx->tls_padding;

@@ -1792,7 +1792,6 @@ int worker_submit(struct worker_ctx *worker, uv_handle_t *handle,
 {
 	bool OK = worker && handle && handle->data;
 	if (!OK) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 

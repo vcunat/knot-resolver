@@ -134,10 +134,7 @@ static int wildcard_radix_len_diff(const knot_dname_t *expanded,
 
 int kr_rrset_validate(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *covered)
 {
-	if (!vctx) {
-		return kr_error(EINVAL);
-	}
-	if (!vctx->pkt || !covered || !vctx->keys || !vctx->zone_name) {
+	if (!vctx || !vctx->pkt || !covered || !vctx->keys || !vctx->zone_name) {
 		return kr_error(EINVAL);
 	}
 
@@ -311,7 +308,6 @@ int kr_dnskeys_trusted(kr_rrset_validation_ctx_t *vctx, const knot_rrset_t *ta)
 	const bool ok = pkt && keys && ta && ta->rrs.rr_count && ta->rrs.data
 			&& ta->type == KNOT_RRTYPE_DS;
 	if (!ok) {
-		assert(false);
 		return kr_error(EINVAL);
 	}
 
