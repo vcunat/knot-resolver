@@ -17,6 +17,7 @@
 #pragma once
 
 #include <errno.h>
+#include <assert.h>
 #include <libknot/errcode.h>
 #include <libknot/dname.h>
 #include <libknot/rrset.h>
@@ -48,8 +49,13 @@ typedef unsigned int uint;
  */
 #define kr_ok() 0
 /* Mark as cold to mark all branches as unlikely. */
-static inline int KR_COLD kr_error(int x) {
-    return x <= 0 ? x : -x;
+static inline int KR_COLD kr_error(int err) {
+	if (err >= 0)
+		err = -err;
+	/* EINVAL is always a *programming* error.
+	 * We want to fail fast while debugging. */
+	assert(err != -EINVAL);
+	return err;
 }
 #define kr_strerror(x) strerror(abs(x))
 
