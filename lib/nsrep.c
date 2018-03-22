@@ -82,130 +82,115 @@ static void update_nsrep_set(struct kr_nsrep *ns, const knot_dname_t *name, uint
 
 #undef ADDR_SET
 
-static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
-			      unsigned score, uint8_t *addr[])
+/** Scan addr_set and choose the best KR_NSREP_MAXADDR (or fewer) addresses.
+ * \return the best score (> KR_NS_MAX_SCORE if nothing suitable found) */
+static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, uint8_t *addr[])
 {
 	kr_nsrep_rtt_lru_t *rtt_cache = ctx->cache_rtt;
-	struct kr_qflags opts = ctx->options;
-	kr_nsrep_rtt_lru_entry_t *rtt_cache_entry_ptr[KR_NSREP_MAXADDR] = { NULL, };
-	assert (KR_NSREP_MAXADDR >= 2);
-	unsigned rtt_cache_entry_score[KR_NSREP_MAXADDR] = { score, KR_NS_MAX_SCORE + 1, };
-	uint64_t now = kr_now();
+	const struct kr_qflags opts = ctx->options;
 
-	/* Name server is better candidate if it has address record. */
+	/* We first produce a list with more fields. */
+	struct addr_info {
+		uint8_t *addr;
+		unsigned score;
+		bool is_timeouted;
+		kr_nsrep_rtt_lru_entry_t *cached;
+	};
+	struct addr_info ais[KR_NSREP_MAXADDR] =
+		{ { .addr = NULL, .score = KR_NS_MAX_SCORE + 1, } };
+
+	const uint64_t now = kr_now();
+
 	for (uint8_t *it = pack_head(*addr_set); it != pack_tail(*addr_set);
 						it = pack_obj_next(it)) {
 		void *val = pack_obj_val(it);
 		size_t len = pack_obj_len(it);
-		unsigned favour = 0;
+		unsigned penalty = 0;
 		bool is_valid = false;
 		/* Check if the address isn't disabled. */
 		if (len == sizeof(struct in6_addr)) {
 			is_valid = !(opts.NO_IPV6);
-			favour = FAVOUR_IPV6;
 		} else {
 			assert(len == sizeof(struct in_addr));
 			is_valid = !(opts.NO_IPV4);
+			penalty = FAVOUR_IPV6;
 		}
 
 		if (!is_valid) {
 			continue;
 		}
 
-		/* Get score for the current address. */
-		kr_nsrep_rtt_lru_entry_t *cached = rtt_cache ?
-						   lru_get_try(rtt_cache, val, len) :
-						   NULL;
-		unsigned cur_addr_score = KR_NS_GLUED;
-		if (cached) {
-			cur_addr_score = cached->score;
-			if (cached->score >= KR_NS_TIMEOUT) {
+		/* Get all the information for the current address. */
+		struct addr_info ai;
+		memset(&ai, 0, sizeof(ai));
+		ai.addr = it;
+		ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
+		ai.score = KR_NS_GLUED; /*< advantage to unknown IPs */
+		if (ai.cached) {
+			ai.score = ai.cached->score;
+			if (ai.cached->score >= KR_NS_TIMEOUT) {
 				/* If NS once was marked as "timeouted",
 				 * it won't participate in NS elections
 				 * at least ctx->cache_rtt_tout_retry_interval milliseconds. */
-				uint64_t elapsed = now - cached->tout_timestamp;
+				uint64_t elapsed = now - ai.cached->tout_timestamp;
+				assert(((int64_t)elapsed) >= 0);
 				elapsed = elapsed > UINT_MAX ? UINT_MAX : elapsed;
 				if (elapsed > ctx->cache_rtt_tout_retry_interval) {
 					/* Select this NS for probing in this particular query,
 					 * but don't change the cached score.
 					 * For other queries this NS will remain "timeouted". */
-					cur_addr_score = KR_NS_LONG - 1;
+					ai.score = KR_NS_LONG - 1;
+					ai.is_timeouted = true;
+				} else {
+					continue;
 				}
 			}
 		}
+		ai.score = MIN(KR_NS_MAX_SCORE, ai.score + penalty);
 
-		for (size_t i = 0; i < KR_NSREP_MAXADDR; ++i) {
-			if (cur_addr_score >= KR_NS_TIMEOUT) {
-				/* We can't use favour here.
-				 * If all of the conditions below are true
-				 *
-				 * rtt_cache_entry_score[i] < KR_NS_TIMEOUT
-				 * rtt_cache_entry_score[i] + favour > KR_NS_TIMEOUT
-				 * cur_addr_score < rtt_cache_entry_score[i] + favour
-				 *
-				 * we will prefer "certainly dead" cur_addr_score
-				 * instead of "almost dead, but alive" rtt_cache_entry_score[i]
-				 */
-				if (cur_addr_score >= rtt_cache_entry_score[i]) {
-					continue;
-				}
-				/* Shake down previous contenders */
-				for (size_t j = KR_NSREP_MAXADDR - 1; j > i; --j) {
-					addr[j] = addr[j - 1];
-					rtt_cache_entry_ptr[j] = rtt_cache_entry_ptr[ j - 1];
-					rtt_cache_entry_score[j] = rtt_cache_entry_score[j - 1];
-				}
-				addr[i] = it;
-				rtt_cache_entry_score[i] = cur_addr_score;
-				rtt_cache_entry_ptr[i] = cached;
+		/* Insert ai into the sorted ais list (by the score). */
+		for (int i = 0; i < KR_NSREP_MAXADDR; ++i) {
+			if (!ais[i].addr) { /* empty place at the end */
+				ais[i] = ai;
 				break;
-			} else if (cur_addr_score < rtt_cache_entry_score[i] + favour) {
-				/* Shake down previous contenders */
-				for (size_t j = KR_NSREP_MAXADDR - 1; j > i; --j) {
-					addr[j] = addr[j - 1];
-					rtt_cache_entry_ptr[j] = rtt_cache_entry_ptr[j - 1];
-					rtt_cache_entry_score[j] = rtt_cache_entry_score[j - 1];
+			}
+			if (ais[i].score > ai.score) { /* insert before this element */
+				/* Shift elements.  LATER: memmove might be faster. */
+				for (int j = KR_NSREP_MAXADDR - 1; j > i; --j) {
+					ais[j] = ais[j - 1];
 				}
-				addr[i] = it;
-				rtt_cache_entry_score[i] = cur_addr_score;
-				rtt_cache_entry_ptr[i] = cached;
+				ais[i] = ai;
 				break;
 			}
 		}
 	}
 
-	/* At this point, rtt_cache_entry_ptr contains up to KR_NSREP_MAXADDR
-	 * pointers to the rtt cache entries with the best scores for the given addr_set.
-	 * Check if there are timeouted NS. */
+	/* Copy the result and bump timeouted NSs. */
+	for (int i = 0; i < KR_NSREP_MAXADDR; ++i) {
+		addr[i] = ais[i].addr;
+		if (!addr[i]) break; /* this was the last (non-sensical) element */
 
-	for (size_t i = 0; i < KR_NSREP_MAXADDR; ++i) {
-		if (rtt_cache_entry_ptr[i] == NULL)
-			continue;
-		if (rtt_cache_entry_ptr[i]->score < KR_NS_TIMEOUT)
-			continue;
-
-		uint64_t elapsed = now - rtt_cache_entry_ptr[i]->tout_timestamp;
-		elapsed = elapsed > UINT_MAX ? UINT_MAX : elapsed;
-		if (elapsed <= ctx->cache_rtt_tout_retry_interval)
-			continue;
-
-		/* rtt_cache_entry_ptr[i] points to "timeouted" rtt cache entry.
-		 * The period of the ban on participation in elections has expired. */
-
+		if (!ais[i].is_timeouted) continue;
+		/* If we've decided to add timeouted NSs into the list, we bump
+		 * their timestamps so they aren't also attempted in the meantime
+		 * before we know the result of this probe.
+		 * TODO: this isn't perfect at all, as there's no guarantee
+		 * that we will actually probe those servers.  In particular,
+		 * different NS name might be chosen and this list may be forgotten.
+		 */
+		ais[i].cached->tout_timestamp = now;
 		if (VERBOSE_STATUS) {
 			void *val = pack_obj_val(addr[i]);
 			size_t len = pack_obj_len(addr[i]);
 			char sa_str[INET6_ADDRSTRLEN];
 			int af = (len == sizeof(struct in6_addr)) ? AF_INET6 : AF_INET;
 			inet_ntop(af, val, sa_str, sizeof(sa_str));
-			kr_log_verbose("[     ][nsre] probing timeouted NS: %s, score %i\n",
-				       sa_str, rtt_cache_entry_ptr[i]->score);
+			kr_log_verbose("[     ][nsre] adding timeouted NS: %s, score %i\n",
+				       sa_str, ais[i].cached->score);
 		}
-
-		rtt_cache_entry_ptr[i]->tout_timestamp = now;
 	}
 
-	return rtt_cache_entry_score[0];
+	return ais[0].score;
 }
 
 static int eval_nsrep(const char *k, void *v, void *baton)
@@ -247,7 +232,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 			}
 		}
 	} else {
-		score = eval_addr_set(addr_set, ctx, score, addr_choice);
+		score = eval_addr_set(addr_set, ctx, addr_choice);
 	}
 
 	/* Probabilistic bee foraging strategy (naive).
@@ -362,7 +347,7 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx)
 	}
 	/* Evaluate addr list */
 	uint8_t *addr_choice[KR_NSREP_MAXADDR] = { NULL, };
-	unsigned score = eval_addr_set(addr_set, ctx, ns->score, addr_choice);
+	unsigned score = eval_addr_set(addr_set, ctx, addr_choice);
 	update_nsrep_set(ns, ns->name, addr_choice, score);
 	return kr_ok();
 }
