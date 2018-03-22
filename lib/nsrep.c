@@ -83,8 +83,10 @@ static void update_nsrep_set(struct kr_nsrep *ns, const knot_dname_t *name, uint
 #undef ADDR_SET
 
 /** Scan addr_set and choose the best KR_NSREP_MAXADDR (or fewer) addresses.
+ * \param has_timeouted[out] optionally indicated if the list contains a timeouted IP
  * \return the best score (> KR_NS_MAX_SCORE if nothing suitable found) */
-static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, uint8_t *addr[])
+static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
+				uint8_t *addr[], bool *retry_timeouted)
 {
 	kr_nsrep_rtt_lru_t *rtt_cache = ctx->cache_rtt;
 	const struct kr_qflags opts = ctx->options;
@@ -154,8 +156,11 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, uint8_t 
 				ais[i] = ai;
 				break;
 			}
-			if (ais[i].score > ai.score) { /* insert before this element */
-				/* Shift elements.  LATER: memmove might be faster. */
+			/* We give preference to "timeouted" servers,
+			 * to make sure that at least one of them is retried. */
+			if (ai.is_timeouted > ais[i].is_timeouted
+			    || ais[i].score > ai.score) {
+				/* Insert on this position i. LATER: memmove might be faster. */
 				for (int j = KR_NSREP_MAXADDR - 1; j > i; --j) {
 					ais[j] = ais[j - 1];
 				}
@@ -166,18 +171,25 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, uint8_t 
 	}
 
 	/* Copy the result and bump timeouted NSs. */
+	bool has_touted = false;
 	for (int i = 0; i < KR_NSREP_MAXADDR; ++i) {
 		addr[i] = ais[i].addr;
 		if (!addr[i]) break; /* this was the last (non-sensical) element */
 
 		if (!ais[i].is_timeouted) continue;
+		has_touted = true;
 		/* If we've decided to add timeouted NSs into the list, we bump
 		 * their timestamps so they aren't also attempted in the meantime
 		 * before we know the result of this probe.
 		 * TODO: this isn't perfect at all, as there's no guarantee
-		 * that we will actually probe those servers.  In particular,
-		 * different NS name might be chosen and this list may be forgotten.
+		 * that we will actually probe *all* of those servers.
 		 */
+		if (!ais[i].cached) {
+			/* Never happens, but the linter is unable to deduce that,
+			 * and it would block CI. */
+			assert(false);
+			continue;
+		}
 		ais[i].cached->tout_timestamp = now;
 		if (VERBOSE_STATUS) {
 			void *val = pack_obj_val(addr[i]);
@@ -190,6 +202,9 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, uint8_t 
 		}
 	}
 
+	if (retry_timeouted != NULL) {
+		*retry_timeouted = has_touted;
+	}
 	return ais[0].score;
 }
 
@@ -214,6 +229,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 	/* Favour nameservers with unknown addresses to probe them,
 	 * otherwise discover the current best address for the NS. */
 	pack_t *addr_set = (pack_t *)v;
+	bool retry_timeouted = false;
 	if (addr_set->len == 0) {
 		score = KR_NS_UNKNOWN;
 		/* If the server doesn't have IPv6, give it disadvantage. */
@@ -232,36 +248,43 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 			}
 		}
 	} else {
-		score = eval_addr_set(addr_set, ctx, addr_choice);
+		score = eval_addr_set(addr_set, ctx, addr_choice, &retry_timeouted);
 	}
 
 	/* Probabilistic bee foraging strategy (naive).
 	 * The fastest NS is preferred by workers until it is depleted (timeouts or degrades),
 	 * at the same time long distance scouts probe other sources (low probability).
-	 * Servers on TIMEOUT will not have probed at all.
-	 * Servers with score above KR_NS_LONG will have periodically removed from
-	 * reputation cache, so that kresd can reprobe them. */
-	if (score >= KR_NS_TIMEOUT) {
+	 * Well, we've warped this strategy a lot over time.
+	 */
+	int ret = kr_ok();
+	if (addr_set->len != 0 && addr_choice[0] == NULL) {
+		/* All IPs filtered out (timeouts); skip this name. */
 		return kr_ok();
+
+	} else if (retry_timeouted) {
+		/* We decided to re-probe the IP(s), so let's choose this NS name
+		 * and stop looking for others. */
+		ret = 1;
+
 	} else if (score <= ns->score &&
-	   (score < KR_NS_LONG  || qry->flags.NO_THROTTLE)) {
-		update_nsrep_set(ns, (const knot_dname_t *)k, addr_choice, score);
-		ns->reputation = reputation;
+		   (score < KR_NS_LONG || qry->flags.NO_THROTTLE)) {
+		/* It's better and still OK. */
+
 	} else if ((kr_rand_uint(100) < 10) &&
 		   (kr_rand_uint(KR_NS_MAX_SCORE) >= score)) {
-		/* With 10% chance probe server with a probability
-		 * given by its RTT / MAX_RTT. */
-		update_nsrep_set(ns, (const knot_dname_t *)k, addr_choice, score);
-		ns->reputation = reputation;
-		return 1; /* Stop evaluation */
-	} else if (ns->score > KR_NS_MAX_SCORE) {
-		/* Check if any server was already selected.
-		 * If no, pick current server and continue evaluation. */
-		update_nsrep_set(ns, (const knot_dname_t *)k, addr_choice, score);
-		ns->reputation = reputation;
+		/* Otherwise, with 10% chance probe server with a probability
+		 * given by its score / MAX_SCORE. */
+		ret = 1;
+
+	} else if (ns->score <= KR_NS_MAX_SCORE) {
+		/* A better name than this has been seen, so skip this one. */
+		return kr_ok();
 	}
 
-	return kr_ok();
+	update_nsrep_set(ns, (const knot_dname_t *)k, addr_choice, score);
+	ns->reputation = reputation;
+
+	return ret;
 }
 
 int kr_nsrep_set(struct kr_query *qry, size_t index, const struct sockaddr *sock)
@@ -347,7 +370,7 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx)
 	}
 	/* Evaluate addr list */
 	uint8_t *addr_choice[KR_NSREP_MAXADDR] = { NULL, };
-	unsigned score = eval_addr_set(addr_set, ctx, addr_choice);
+	unsigned score = eval_addr_set(addr_set, ctx, addr_choice, NULL);
 	update_nsrep_set(ns, ns->name, addr_choice, score);
 	return kr_ok();
 }
