@@ -267,7 +267,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 		ret = 1;
 
 	} else if (score <= ns->score &&
-		   (score < KR_NS_LONG || qry->flags.NO_THROTTLE)) {
+		   (true || score < KR_NS_LONG || qry->flags.NO_THROTTLE)) {
 		/* It's better and still OK. */
 
 	} else if ((kr_rand_uint(100) < 10) &&
