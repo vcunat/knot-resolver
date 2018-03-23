@@ -130,6 +130,7 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
 		ai.score = KR_NS_GLUED; /*< advantage to unknown IPs */
 		if (ai.cached) {
 			ai.score = ai.cached->score;
+#if 0
 			if (ai.cached->score >= KR_NS_TIMEOUT) {
 				/* If NS once was marked as "timeouted",
 				 * it won't participate in NS elections
@@ -147,6 +148,7 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
 					continue;
 				}
 			}
+#endif
 		}
 		ai.score = MIN(KR_NS_MAX_SCORE, ai.score + penalty);
 
