@@ -47,7 +47,7 @@ enum kr_ns_score {
 
 /* If once NS was marked as "timeouted", it won't participate in NS elections
  * at least KR_NS_TIMEOUT_RETRY_INTERVAL milliseconds. */
-#define KR_NS_TIMEOUT_RETRY_INTERVAL 60000
+#define KR_NS_TIMEOUT_RETRY_INTERVAL 10000
 
 /**
  * NS QoS flags.
