@@ -126,18 +126,22 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, bool fee
 		struct addr_info ai;
 		memset(&ai, 0, sizeof(ai));
 		ai.addr = it;
-		if (feeling_lucky) {
-			ai.score = kr_rand_uint(KR_NS_UNKNOWN);
+		ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
+
+		if (!ai.cached) {
+			/* Unknown RTT? ...  */
+			ai.score = feeling_lucky
+				/* ... let's try that first while we're lucky. */
+				? kr_rand_uint(6)
+				/* ... I don't much feel like trying it. */
+				: kr_rand_uint(KR_NS_UNKNOWN);
+
 		} else {
-			ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
-			ai.score = KR_NS_GLUED; /*< advantage to unknown IPs */
-		}
-		if (ai.cached) {
-			ai.score = ai.cached->score;
 			if (ai.cached->score >= KR_NS_TIMEOUT) {
 				/* If NS once was marked as "timeouted",
 				 * it won't participate in NS elections
-				 * at least ctx->cache_rtt_tout_retry_interval milliseconds. */
+				 * at least ctx->cache_rtt_tout_retry_interval milliseconds.
+				 * Regular luck isn't enough to affect this case. */
 				uint64_t elapsed = now - ai.cached->tout_timestamp;
 				assert(((int64_t)elapsed) >= 0);
 				elapsed = elapsed > UINT_MAX ? UINT_MAX : elapsed;
@@ -150,10 +154,26 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, bool fee
 				} else {
 					continue;
 				}
+
+			} else if (feeling_lucky) {
+				/* Known RTT and lucky?  (and not timeouted)
+				 * The usual lucky choice: just ignore the knowledge. */
+				ai.score = kr_rand_uint(KR_NS_UNKNOWN);
+
+			} else { /* Known RTT, not lucky and not timeouted.
+				  * Let's actually use the RTT :-) */
+				ai.score = ai.cached->score;
 			}
 		}
-		if (!feeling_lucky) {
-			ai.score = MIN(KR_NS_MAX_SCORE, ai.score + penalty);
+
+		if (!feeling_lucky && !ai.is_timeouted) {
+			ai.score += penalty;
+			/* Now we add 0--25% random jitter to spread load
+			 * a little if we have multiple similar choices.
+			 * This only makes sense if (!feeling_lucky), and for
+			 * is_timeouted we don't want to get over KR_NS_LONG ATM. */
+			ai.score += kr_rand_uint(ai.score / 4);
+			ai.score = MIN(KR_NS_MAX_SCORE, ai.score);
 		}
 
 		/* Insert ai into the sorted ais list (by the score). */
@@ -286,7 +306,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 		ret = 1;
 
 	} else if (score < ns->score) {
-		/* It's better, let's take it (and save randomness). */
+		/* It's better, let's take it. */
 
 	} else { /* We don't want this one. */
 		return kr_ok();
