@@ -43,7 +43,7 @@ enum kr_ns_score {
 /**
  *  See kr_nsrep_update_rtt()
  */
-#define KR_NS_DEAD (((KR_NS_TIMEOUT * 4) + 3) / 3)
+#define KR_NS_DEAD (((KR_NS_TIMEOUT * 8) / 7) + 1)
 
 /* If once NS was marked as "timeouted", it won't participate in NS elections
  * at least KR_NS_TIMEOUT_RETRY_INTERVAL milliseconds. */
