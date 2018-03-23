@@ -255,6 +255,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 	 * The fastest NS is preferred by workers until it is depleted (timeouts or degrades),
 	 * at the same time long distance scouts probe other sources (low probability).
 	 * Well, we've warped this strategy a lot over time.
+	 * TODO: kill NO_THROTTLE or something?
 	 */
 	int ret = kr_ok();
 	if (addr_set->len != 0 && addr_choice[0] == NULL) {
@@ -266,9 +267,8 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 		 * and stop looking for others. */
 		ret = 1;
 
-	} else if (score <= ns->score &&
-		   (score < KR_NS_LONG || qry->flags.NO_THROTTLE)) {
-		/* It's better and still OK. */
+	} else if (score < ns->score) {
+		/* It's better, let's take it (and save randomness). */
 
 	} else if ((kr_rand_uint(100) < 10) &&
 		   (kr_rand_uint(KR_NS_MAX_SCORE) >= score)) {
@@ -276,8 +276,7 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 		 * given by its score / MAX_SCORE. */
 		ret = 1;
 
-	} else if (ns->score <= KR_NS_MAX_SCORE) {
-		/* A better name than this has been seen, so skip this one. */
+	} else { /* We don't want this one. */
 		return kr_ok();
 	}
 
