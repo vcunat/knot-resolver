@@ -85,7 +85,7 @@ static void update_nsrep_set(struct kr_nsrep *ns, const knot_dname_t *name, uint
 /** Scan addr_set and choose the best KR_NSREP_MAXADDR (or fewer) addresses.
  * \param has_timeouted[out] optionally indicated if the list contains a timeouted IP
  * \return the best score (> KR_NS_MAX_SCORE if nothing suitable found) */
-static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
+static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx, bool feeling_lucky,
 				uint8_t *addr[], bool *retry_timeouted)
 {
 	kr_nsrep_rtt_lru_t *rtt_cache = ctx->cache_rtt;
@@ -126,8 +126,12 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
 		struct addr_info ai;
 		memset(&ai, 0, sizeof(ai));
 		ai.addr = it;
-		ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
-		ai.score = KR_NS_GLUED; /*< advantage to unknown IPs */
+		if (feeling_lucky) {
+			ai.score = kr_rand_uint(KR_NS_UNKNOWN);
+		} else {
+			ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
+			ai.score = KR_NS_GLUED; /*< advantage to unknown IPs */
+		}
 		if (ai.cached) {
 			ai.score = ai.cached->score;
 			if (ai.cached->score >= KR_NS_TIMEOUT) {
@@ -148,7 +152,9 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
 				}
 			}
 		}
-		ai.score = MIN(KR_NS_MAX_SCORE, ai.score + penalty);
+		if (!feeling_lucky) {
+			ai.score = MIN(KR_NS_MAX_SCORE, ai.score + penalty);
+		}
 
 		/* Insert ai into the sorted ais list (by the score). */
 		for (int i = 0; i < KR_NSREP_MAXADDR; ++i) {
@@ -208,10 +214,16 @@ static unsigned eval_addr_set(pack_t *addr_set, struct kr_context *ctx,
 	return ais[0].score;
 }
 
+struct nsrep_p {
+	/** If true, choose NSs by randomness instead of RTT estimates. */
+	bool feeling_lucky;
+	struct kr_query *qry;
+};
+
 static int eval_nsrep(const char *k, void *v, void *baton)
 {
-	struct kr_query *qry = baton;
-	struct kr_nsrep *ns = &qry->ns;
+	struct nsrep_p *param = baton;
+	struct kr_nsrep *ns = &param->qry->ns;
 	struct kr_context *ctx = ns->ctx;
 	unsigned score = KR_NS_MAX_SCORE;
 	unsigned reputation = 0;
@@ -226,16 +238,21 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 		}
 	}
 
-	/* Favour nameservers with unknown addresses to probe them,
-	 * otherwise discover the current best address for the NS. */
 	pack_t *addr_set = (pack_t *)v;
 	bool retry_timeouted = false;
 	if (addr_set->len == 0) {
+		/* We don't even know any address for the NS.
+		 * Let's prefer it if we're feeling lucky, with a bit of random jitter. */
 		score = KR_NS_UNKNOWN;
+		if (param->feeling_lucky) {
+			score = kr_rand_uint(6);
+		}
+
 		/* If the server doesn't have IPv6, give it disadvantage. */
 		if (reputation & KR_NS_NOIP6) {
 			score += FAVOUR_IPV6;
 			/* If the server is unknown but has rep record, treat it as timeouted */
+			/* TODO: time limits for this as well, as if timeouted. */
 			if (reputation & KR_NS_NOIP4) {
 				score = KR_NS_UNKNOWN;
 				/* Try to start with clean slate */
@@ -248,7 +265,8 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 			}
 		}
 	} else {
-		score = eval_addr_set(addr_set, ctx, addr_choice, &retry_timeouted);
+		score = eval_addr_set(addr_set, ctx, param->feeling_lucky,
+					addr_choice, &retry_timeouted);
 	}
 
 	/* Probabilistic bee foraging strategy (naive).
@@ -269,12 +287,6 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 
 	} else if (score < ns->score) {
 		/* It's better, let's take it (and save randomness). */
-
-	} else if ((kr_rand_uint(100) < 10) &&
-		   (kr_rand_uint(KR_NS_MAX_SCORE) >= score)) {
-		/* Otherwise, with 10% chance probe server with a probability
-		 * given by its score / MAX_SCORE. */
-		ret = 1;
 
 	} else { /* We don't want this one. */
 		return kr_ok();
@@ -337,6 +349,11 @@ int kr_nsrep_set(struct kr_query *qry, size_t index, const struct sockaddr *sock
 	(ns)->score = KR_NS_MAX_SCORE + 1; \
 } while (0)
 
+static inline bool am_i_lucky()
+{
+	return kr_rand_uint(100) < 20;
+}
+
 int kr_nsrep_elect(struct kr_query *qry, struct kr_context *ctx)
 {
 	if (!qry || !ctx) {
@@ -345,7 +362,11 @@ int kr_nsrep_elect(struct kr_query *qry, struct kr_context *ctx)
 
 	struct kr_nsrep *ns = &qry->ns;
 	ELECT_INIT(ns, ctx);
-	int ret = map_walk(&qry->zone_cut.nsset, eval_nsrep, qry);
+	struct nsrep_p param = {
+		.qry = qry,
+		.feeling_lucky = am_i_lucky(),
+	};
+	int ret = map_walk(&qry->zone_cut.nsset, eval_nsrep, &param);
 	if (qry->ns.score <= KR_NS_MAX_SCORE && qry->ns.score >= KR_NS_LONG) {
 		/* This is a low-reliability probe,
 		 * go with TCP to get ICMP reachability check. */
@@ -369,7 +390,7 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx)
 	}
 	/* Evaluate addr list */
 	uint8_t *addr_choice[KR_NSREP_MAXADDR] = { NULL, };
-	unsigned score = eval_addr_set(addr_set, ctx, addr_choice, NULL);
+	unsigned score = eval_addr_set(addr_set, ctx, am_i_lucky(), addr_choice, NULL);
 	update_nsrep_set(ns, ns->name, addr_choice, score);
 	return kr_ok();
 }
