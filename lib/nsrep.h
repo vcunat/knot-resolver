@@ -46,8 +46,9 @@ enum kr_ns_score {
 #define KR_NS_DEAD (((KR_NS_TIMEOUT * 4) + 3) / 3)
 
 /* If once NS was marked as "timeouted", it won't participate in NS elections
- * at least KR_NS_TIMEOUT_RETRY_INTERVAL milliseconds. */
-#define KR_NS_TIMEOUT_RETRY_INTERVAL 60000
+ * at least KR_NS_TIMEOUT_RETRY_INTERVAL milliseconds.
+ * There isn't much sense in keeping the default high without serve_stale. */
+#define KR_NS_TIMEOUT_RETRY_INTERVAL 5000
 
 /**
  * NS QoS flags.
