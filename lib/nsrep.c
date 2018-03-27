@@ -65,9 +65,9 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx)
 /** Address info for elect* functions. */
 struct elect_ai {
 	uint8_t *addr; /**< address - pointer to pack_obj  */
-	unsigned score;
-	bool is_timeouted;
-	kr_nsrep_rtt_lru_entry_t *cached;
+	unsigned score; /**< it may be RTT estimate and it may be something else */
+	bool is_timeouted; /**< address previously classified as non-responding */
+	kr_nsrep_rtt_lru_entry_t *cached; /**< cached RTT estimate or NULL */
 };
 
 /** Various data for elect* functions. */
@@ -168,7 +168,7 @@ static int elect(struct kr_query *qry, bool probed_ns)
 	assert(p.ais - 1 == &p.ai_explored); /*< we use this hack, so check it */
 	struct elect_ai *ais = p.ai_explored.addr ? &p.ai_explored : p.ais;
 	ns->score = (ais[0].addr && !ais[0].cached) ? KR_NS_UNKNOWN : ais[0].score;
-	ns->name = (const knot_dname_t *)"";
+	ns->name = p.ns_name;
 	ns->reputation = 0;
 	for (int i = 0; i < KR_NSREP_MAXADDR; ++i) {
 		if (!ais[i].addr) { /* this was the last (non-sensical) element */
@@ -240,6 +240,11 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 	struct elect_p *p = elect_p;
 	struct kr_context *ctx = p->qry->ns.ctx;
 	pack_t *addr_set = (pack_t *)ns_addrs;
+
+	/* Try to fill ns_name at least with something. */
+	if (!p->ns_name) {
+		p->ns_name = name;
+	}
 
 	if (addr_set->len == 0) {
 		++p->cnt_noip;
@@ -348,6 +353,7 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 			if (p->ai_explored.score > e_score) {
 				p->ai_explored = ai;
 				p->ai_explored.score = e_score;
+				p->ns_name = name;
 			}
 		}
 
@@ -358,6 +364,9 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 				if (i + 1 < KR_NSREP_MAXADDR) {
 					p->ais[i + 1].addr = NULL;
 				}
+				if (i == 0) {
+					p->ns_name = name;
+				}
 				break;
 			}
 			if (p->ais[i].score > ai.score) {
@@ -366,6 +375,9 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 					p->ais[j] = p->ais[j - 1];
 				}
 				p->ais[i] = ai;
+				if (i == 0) {
+					p->ns_name = name;
+				}
 				break;
 			}
 		}

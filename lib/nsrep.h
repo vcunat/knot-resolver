@@ -102,11 +102,14 @@ typedef lru_t(unsigned) kr_nsrep_lru_t;
  */
 struct kr_nsrep
 {
-	unsigned score;                  /**< NS score */
-	unsigned reputation;             /**< NS reputation */
-	const knot_dname_t *name;        /**< NS name */
-	struct kr_context *ctx;          /**< Resolution context */
-	union inaddr addr[KR_NSREP_MAXADDR];        /**< NS address(es) */
+	unsigned score;           /**< RTT estimate, for addr[0] (initially) */
+	unsigned reputation;      /**< bitfield of enum kr_ns_rep */
+	const knot_dname_t *name; /**< NS name to probe if no addresses are present;
+				   * otherwise often not meaningful (? FIXME)
+				   * but maybe required to be _some_ of the NS names. */
+	struct kr_context *ctx;   /**< Resolution context */
+	union inaddr addr[KR_NSREP_MAXADDR]; /**< NS addresses, capped by AF_UNSPEC.
+					      * They may be mixed from multiple NS names. */
 };
 
 /**
