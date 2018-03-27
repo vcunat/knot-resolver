@@ -79,12 +79,12 @@ struct elect_p {
 	uint64_t now; /**< cached kr_now() */
 
 	/** Input: if (!explore_ns && ns_name), this NS's IPs are to be preferred.
-	 *
-	 * Output: if non-NULL, the current winner is to obtain addresses for this NS.
-	 * That case makes ais redundant.
-	 * The associated score and reputation for this case is separate. */
+	 * Output: some NS name (trying hard to put anything in there).
+	 * In case has_ns_noip is flipped to true, addresses for ns_name are missing,
+	 * and if you chose explore_ns, this indicates the winner NS has been found. */
 	const knot_dname_t *ns_name;
 	unsigned score, reputation;
+	bool has_ns_noip;
 
 	/* Logged counts: considered addresses (after IPvX filter), names without addresses. */
 	int cnt_ip, cnt_noip;
@@ -121,6 +121,7 @@ static int elect(struct kr_query *qry, bool probed_ns)
 	p.now = kr_now();
 	p.score = KR_NS_MAX_SCORE + 1;
 	p.reputation = 0;
+	p.has_ns_noip = false;
  	p.ais[0] = p.ai_explored =
 		(struct elect_ai){ .addr = NULL, .score = KR_NS_MAX_SCORE + 1, };
 	p.cnt_ip = p.cnt_noip = 0;
@@ -132,7 +133,7 @@ static int elect(struct kr_query *qry, bool probed_ns)
 		/* No address chosen.
 		 * TODO: two options: with NS exploration and without it. verify! */
 		ns->addr[0].ip.sa_family = AF_UNSPEC;
-		if (p.ns_name) {
+		if (p.has_ns_noip) {
 			/* we at least chose a NS name */
 			ns->name = p.ns_name;
 			ns->score = KR_NS_UNKNOWN;
@@ -148,9 +149,11 @@ static int elect(struct kr_query *qry, bool probed_ns)
 			} else {
 				ns_str = "<NONE>";
 			}
-			VERBOSE_MSG(qry, "decided to find addresses of %s "
+			VERBOSE_MSG(qry, "%s %s "
 					"(IP cnt: %d, noIP cnt: %d, mode: %s%s%s, reput: %d)\n",
-					ns_str,
+					p.has_ns_noip ? "decided to find addresses of"
+							: "nothing suitable found",
+					p.has_ns_noip ? ns_str : "",
 					p.cnt_ip, p.cnt_noip, probed_ns ? "1" : "a",
 					p.explore_ns ? "n" : "", p.explore_ip ? "i" : "",
 					p.reputation);
@@ -283,6 +286,7 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 
 		/* Switch the current winner, if we're better. */
 		if (score < p->score) {
+			p->has_ns_noip = true;
 			p->ns_name = name;
 			p->score = score;
 			p->reputation = reputation;
@@ -295,7 +299,7 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 	 * We don't do this it we've already decided that exploring another
 	 * new NS is better.
 	 */
-	if (p->explore_ns && p->ns_name) {
+	if (p->explore_ns && p->has_ns_noip) {
 		return kr_ok();
 	}
 	const bool prefer_this_ns = !p->explore_ns && p->ns_name
@@ -327,13 +331,10 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 		struct elect_ai ai;
 		memset(&ai, 0, sizeof(ai));
 		ai.addr = it;
-		if (prefer_this_ns) {
-			ai.score = 1;
-		} else {
-			ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
-			ai.score = ai.cached ? ai.cached->score : kr_rand_uint(KR_NS_UNKNOWN);
-		}
-		if (ai.cached && ai.score >= KR_NS_TIMEOUT) {
+		ai.cached = rtt_cache ? lru_get_try(rtt_cache, val, len) : NULL;
+		ai.score = prefer_this_ns ? 1 :
+			(ai.cached ? ai.cached->score : kr_rand_uint(KR_NS_UNKNOWN));
+		if (ai.cached && ai.cached->score >= KR_NS_TIMEOUT) {
 			/* If NS was marked as "timeouted",
 			 * it won't participate in NS elections
 			 * at least ctx->cache_rtt_tout_retry_interval milliseconds. */
