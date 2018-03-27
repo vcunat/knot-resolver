@@ -300,30 +300,40 @@ static int ns_fetch_cut(struct kr_query *qry, const knot_dname_t *requested_name
 	return KR_STATE_PRODUCE;
 }
 
+/** Get the next address type to try for the NS (or 0 to give up).
+ * Prefer A and continue with AAAA if not available. */
+static uint16_t get_next_type(struct kr_query *qry, struct kr_context *ctx)
+{
+	if (!qry->flags.AWAIT_IPV6 && !ctx->options.NO_IPV6
+	    && !(qry->ns.reputation & KR_NS_NOIP6)) {
+		qry->flags.AWAIT_IPV6 = true;
+		return KNOT_RRTYPE_AAAA;
+	}
+	if (!ctx->options.NO_IPV6 && !(qry->ns.reputation & KR_NS_NOIP6)) {
+		/* apparently we tried to find IPv6 and failed */
+		qry->ns.reputation |= KR_NS_NOIP6;
+		kr_nsrep_update_rep(&qry->ns, qry->ns.reputation, ctx->cache_rep);
+	}
+	if (!qry->flags.AWAIT_IPV4 && !ctx->options.NO_IPV4
+	    && !(qry->ns.reputation & KR_NS_NOIP4)) {
+		qry->flags.AWAIT_IPV4 = true;
+		return KNOT_RRTYPE_A;
+	}
+	/* The caller handles reputation updates in this case. */
+	return 0;
+}
+
 static int ns_resolve_addr(struct kr_query *qry, struct kr_request *param)
 {
 	struct kr_rplan *rplan = &param->rplan;
 	struct kr_context *ctx = param->ctx;
 
-
 	/* Start NS queries from root, to avoid certain cases
 	 * where a NS drops out of cache and the rest is unavailable,
 	 * this would lead to dependency loop in current zone cut.
-	 * Prefer IPv6 and continue with IPv4 if not available.
 	 */
-	uint16_t next_type = 0;
-	if (!(qry->flags.AWAIT_IPV6) &&
-	    !(ctx->options.NO_IPV6)) {
-		next_type = KNOT_RRTYPE_AAAA;
-		qry->flags.AWAIT_IPV6 = true;
-	} else if (!(qry->flags.AWAIT_IPV4) &&
-		   !(ctx->options.NO_IPV4)) {
-		next_type = KNOT_RRTYPE_A;
-		qry->flags.AWAIT_IPV4 = true;
-		/* Hmm, no useable IPv6 then. */
-		qry->ns.reputation |= KR_NS_NOIP6;
-		kr_nsrep_update_rep(&qry->ns, qry->ns.reputation, ctx->cache_rep);
-	}
+
+	uint16_t next_type = get_next_type(qry, ctx);
 	/* Bail out if the query is already pending or dependency loop. */
 	if (!next_type || kr_rplan_satisfies(qry->parent, qry->ns.name, KNOT_CLASS_IN, next_type)) {
 		/* Fall back to SBELT if root server query fails. */

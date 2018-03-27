@@ -127,21 +127,32 @@ static int elect(struct kr_query *qry, bool probed_ns)
 	int ret = map_walk(&qry->zone_cut.nsset, elect_step, &p);
 	assert(ret == kr_ok()); /* not using this so far */
 
-	if (!probed_ns && !p.ais[0].addr) {
+	if (!p.ais[0].addr) {
 		/* No address chosen.
 		 * TODO: two options: with NS exploration and without it. verify! */
 		ns->addr[0].ip.sa_family = AF_UNSPEC;
-		if (!p.ns_name) p.ns_name = (const knot_dname_t *)"";
-		ns->name = p.ns_name;
-		ns->score = p.score;
-		ns->reputation = p.reputation;
+		if (p.ns_name) {
+			/* we at least chose a NS name */
+			ns->name = p.ns_name;
+			ns->score = p.score;
+			ns->reputation = p.reputation;
+		} else {
+			ns->score = KR_NS_MAX_SCORE + 1;
+		}
 		WITH_VERBOSE(qry) {
-			auto_free char *ns_str = kr_dname_text(p.ns_name);
+			auto_free char *ns_stor = NULL;
+			const char *ns_str;
+			if (p.ns_name) {
+				ns_str = ns_stor = kr_dname_text(p.ns_name);
+			} else {
+				ns_str = "<NONE>";
+			}
 			VERBOSE_MSG(qry, "decided to find addresses of %s "
-					"(IP cnt: %d, noIP cnt: %d, mode: %s%s%s)\n",
+					"(IP cnt: %d, noIP cnt: %d, mode: %s%s%s, reput: %d)\n",
 					ns_str,
 					p.cnt_ip, p.cnt_noip, probed_ns ? "1" : "a",
-					p.explore_ns ? "n" : "", p.explore_ip ? "i" : "");
+					p.explore_ns ? "n" : "", p.explore_ip ? "i" : "",
+					p.reputation);
 		}
 		return kr_ok();
 	}
