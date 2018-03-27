@@ -107,6 +107,7 @@ static int elect(struct kr_query *qry, bool probed_ns)
 	/* Set up a struct elect_p; it's slightly messy. */
 	struct elect_p p;
 	if (probed_ns) {
+		assert(ns->name && *ns->name);
 		p.ns_name = ns->name;
 		p.explore_ns = false;
 		p.explore_ip = false;
@@ -134,7 +135,7 @@ static int elect(struct kr_query *qry, bool probed_ns)
 		if (p.ns_name) {
 			/* we at least chose a NS name */
 			ns->name = p.ns_name;
-			ns->score = p.score;
+			ns->score = KR_NS_UNKNOWN;
 			ns->reputation = p.reputation;
 		} else {
 			ns->score = KR_NS_MAX_SCORE + 1;
@@ -166,7 +167,7 @@ static int elect(struct kr_query *qry, bool probed_ns)
 	 * Also bump timeouted addresses on the way, if we've chosen them. */
 	assert(p.ais - 1 == &p.ai_explored); /*< we use this hack, so check it */
 	struct elect_ai *ais = p.ai_explored.addr ? &p.ai_explored : p.ais;
-	ns->score = ais[0].score; /* not sure if this bunch of fields is useful for anything */
+	ns->score = (ais[0].addr && !ais[0].cached) ? KR_NS_UNKNOWN : ais[0].score;
 	ns->name = (const knot_dname_t *)"";
 	ns->reputation = 0;
 	for (int i = 0; i < KR_NSREP_MAXADDR; ++i) {
