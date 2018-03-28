@@ -36,6 +36,11 @@
 #define FAVOUR_IPV6 20 /* 20ms bonus for v6 */
 #endif
 
+/** Add a little random jitter to spread load among addresses with almost same speed. */
+static inline void score_jitter(unsigned *score)
+{
+	*score += kr_rand_uint(*score / 4 + 2);
+}
 
 /** Select which addresses to query xor for which NS to obtain addresses.
  *
@@ -345,6 +350,8 @@ static int elect_step(const char *ns_name, void *ns_addrs, void *elect_p)
 			}
 			ai.score = kr_rand_uint(KR_NS_UNKNOWN);
 			ai.is_timeouted = true;
+		} else if (!prefer_this_ns && ai.cached) {
+			score_jitter(&ai.score);
 		}
 		ai.score = MIN(KR_NS_MAX_SCORE, ai.score + penalty);
 
