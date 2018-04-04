@@ -109,6 +109,7 @@ info:
 	$(info [$(HAS_lua)] luajit (daemon))
 	$(info [$(HAS_libuv)] libuv (daemon))
 	$(info [$(HAS_gnutls)] libgnutls (daemon))
+	$(info [$(HAS_nettle)] nettle (modules/cookies))
 	$(info )
 	$(info Optional)
 	$(info --------)
@@ -120,7 +121,6 @@ info:
 #	$(info [$(HAS_hiredis)] hiredis (modules/redis))
 	$(info [$(HAS_cmocka)] cmocka (tests/unit))
 	$(info [$(HAS_libsystemd)] systemd (daemon))
-	$(info [$(HAS_nettle)] nettle (modules/cookies))
 	$(info [$(HAS_ltn12)] Lua socket ltn12 (trust anchor bootstrapping))
 	$(info [$(HAS_ssl.https)] Lua ssl.https (trust anchor bootstrapping))
 	$(info [$(HAS_libedit)] libedit (client))
@@ -160,12 +160,6 @@ ifeq ($(PLATFORM), Darwin)
 ifneq (,$(findstring luajit, $(lua_LIBS)))
 	lua_LIBS += -pagezero_size 10000 -image_base 100000000
 endif
-endif
-
-# Check if it has nettle to support DNS cookies
-ifeq ($(HAS_nettle), yes)
-BUILD_CFLAGS += -DENABLE_COOKIES
-ENABLE_COOKIES := yes
 endif
 
 # Installation directories
