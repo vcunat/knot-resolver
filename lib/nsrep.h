@@ -154,4 +154,3 @@ int kr_nsrep_copy_set(struct kr_nsrep *dst, const struct kr_nsrep *src);
  */
 KR_EXPORT
 int kr_nsrep_sort(struct kr_nsrep *ns, kr_nsrep_lru_t *cache);
-

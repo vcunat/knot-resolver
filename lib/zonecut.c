@@ -331,10 +331,10 @@ static int fetch_ns(struct kr_context *ctx, struct kr_zonecut *cut,
 		unsigned *cached = lru_get_try(ctx->cache_rep,
 				(const char *)ns_name, knot_dname_size(ns_name));
 		unsigned reputation = (cached) ? *cached : 0;
-		if (!(reputation & KR_NS_NOIP4) && !(ctx->options.NO_IPV4)) {
+		if (!(reputation & KR_NS_NOIP4) && !(qry->flags.NO_IPV4)) {
 			fetch_addr(cut, &ctx->cache, ns_name, KNOT_RRTYPE_A, qry);
 		}
-		if (!(reputation & KR_NS_NOIP6) && !(ctx->options.NO_IPV6)) {
+		if (!(reputation & KR_NS_NOIP6) && !(qry->flags.NO_IPV6)) {
 			fetch_addr(cut,  &ctx->cache, ns_name, KNOT_RRTYPE_AAAA, qry);
 		}
 	}
@@ -442,4 +442,22 @@ int kr_zonecut_find_cached(struct kr_context *ctx, struct kr_zonecut *cut,
 	kr_cache_sync(&ctx->cache);
 	mm_free(cut->pool, qname);
 	return kr_error(ENOENT);
+}
+
+static int select_first_ns(const char *k, void *v, void *baton)
+{
+	assert(baton);
+	*((const knot_dname_t **)baton) = (const knot_dname_t *)k;
+	return 1;
+}
+
+const knot_dname_t *kr_zonecut_find_nsname(struct kr_zonecut *cut)
+{
+	if (!cut) {
+		return NULL;
+	}
+
+	const knot_dname_t *result = NULL;
+	map_walk(&cut->nsset, select_first_ns, &result);
+	return result;
 }

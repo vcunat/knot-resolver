@@ -146,16 +146,16 @@ static int eval_nsrep(const char *k, void *v, void *baton)
 			if (reputation & KR_NS_NOIP4) {
 				score = KR_NS_UNKNOWN;
 				/* Try to start with clean slate */
-				if (!(ctx->options.NO_IPV6)) {
+				if (!(qry->flags.NO_IPV6)) {
 					reputation &= ~KR_NS_NOIP6;
 				}
-				if (!(ctx->options.NO_IPV4)) {
+				if (!(qry->flags.NO_IPV4)) {
 					reputation &= ~KR_NS_NOIP4;
 				}
 			}
 		}
 	} else {
-		score = eval_addr_set(addr_set, ctx->cache_rtt, score, addr_choice, ctx->options);
+		score = eval_addr_set(addr_set, ctx->cache_rtt, score, addr_choice, qry->flags);
 	}
 
 	/* Probabilistic bee foraging strategy (naive).
@@ -258,7 +258,7 @@ int kr_nsrep_elect_addr(struct kr_query *qry, struct kr_context *ctx)
 	}
 	/* Evaluate addr list */
 	uint8_t *addr_choice[KR_NSREP_MAXADDR] = { NULL, };
-	unsigned score = eval_addr_set(addr_set, ctx->cache_rtt, ns->score, addr_choice, ctx->options);
+	unsigned score = eval_addr_set(addr_set, ctx->cache_rtt, ns->score, addr_choice, qry->flags);
 	update_nsrep_set(ns, ns->name, addr_choice, score);
 	return kr_ok();
 }
