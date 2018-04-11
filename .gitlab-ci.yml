@@ -7,19 +7,24 @@ variables:
   COVERAGE: '1'
 
 stages:
+  - source
   - build
   - test
   - coverage
   - deploy
 
+source:
+  # Get a clean source as artifacts.  It's sad we have to do this :-/
+  stage: source
+  script:
+    - git submodule foreach --recursive git clean -fdx
+  artifacts:
+    untracked: true
+
 build:linux:amd64:
   stage: build
-  dependencies: []
+  dependencies: [ source ]
   script:
-    - git status; git submodule status --recursive
-    - git submodule foreach --recursive git clean -fdx
-    - git status; git submodule status --recursive
-    - git diff
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
     - PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   artifacts:
@@ -31,6 +36,7 @@ build:linux:amd64:
 
 build:clang:linux:amd64:
   stage: build
+  dependencies: [ source ]
   image: $CI_REGISTRY/knot/knot-resolver/ci:debian-unstable  # newer Debian for newer Clang
   script:
     - CXX=clang++-5.0 CC=clang-5.0 PREFIX=$(pwd)/.local make -k all "CFLAGS=-Werror -Wno-error=unused-command-line-argument"
@@ -42,6 +48,7 @@ build:clang:linux:amd64:
 
 srpm:
   stage: build
+  dependencies: [ source ]
   allow_failure: true  # don't block testing pipeline in case of failure
   image: $CI_REGISTRY/knot/knot-resolver/ci:fedora-27
   script:
@@ -58,7 +65,7 @@ srpm:
 
 lint:lua:
   stage: test
-  dependencies: []  # do not download build artifacts
+  dependencies: [ source ]
   script:
     - make lint-lua
   tags:
@@ -66,8 +73,8 @@ lint:lua:
 
 lint:c:
   stage: test
+  dependencies: [ source ]
   image: $CI_REGISTRY/knot/knot-resolver/ci:debian-unstable  # newer Debian for newer Clang
-  dependencies: []  # do not download build artifacts
   script:
     - make lint-c CLANG_TIDY="clang-tidy-5.0 -quiet"
   tags:
@@ -76,8 +83,8 @@ lint:c:
 lint:clang-scan-build:
   allow_failure: true  # for now it is just informative
   stage: test
+  dependencies: [ source ]
   image: $CI_REGISTRY/knot/knot-resolver/ci:debian-unstable  # newer Debian for newer Clang
-  dependencies: []  # do not download build artifacts
   script:
     - MAKEFLAGS="-k -j$(nproc)" SCAN_BUILD="/usr/lib/llvm-5.0/bin/scan-build -o scan-results --status-bugs -no-failure-reports" ./tests/clang_scan_build.sh make
   artifacts:
@@ -122,9 +129,9 @@ installcheck:linux:amd64:
 
 doc:
   stage: test
+  dependencies: [ source ]
   script:
     - SPHINXFLAGS="-W" make doc
-  dependencies: []
   artifacts:
     expire_in: 1 hour
     paths:
@@ -364,7 +371,7 @@ obs:devel:
   stage: deploy
   only:
     - schedules
-  dependencies: []
+  dependencies: [ source ]
   script:
     - scripts/make-archive.sh
     - scripts/make-distrofiles.sh
