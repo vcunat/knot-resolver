@@ -14,7 +14,11 @@ stages:
 
 build:linux:amd64:
   stage: build
+  dependencies: []
   script:
+    - git status
+    - git diff
+    - git submodule status
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
     - PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   artifacts:
