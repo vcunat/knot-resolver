@@ -14,7 +14,7 @@ stages:
   - deploy
 
 source:
-  # Get a clean source as artifacts.  It's sad we have to do this :-/
+  # Get a clean submodule source as artifacts.  It's sad we have to do this :-/
   stage: source
   script:
     - git submodule foreach --recursive git clean -fdx
@@ -25,10 +25,6 @@ build:linux:amd64:
   stage: build
   dependencies: [ source ]
   script:
-    - ls -ld /usr/include/luajit-*
-    - pkg-config --cflags luajit
-    - git status --untracked-files=all
-    - git submodule foreach --recursive git status --untracked-files=all
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
     - PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   artifacts:
