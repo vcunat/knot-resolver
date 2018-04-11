@@ -25,8 +25,8 @@ build:linux:amd64:
   stage: build
   dependencies: [ source ]
   script:
-    - git status --untracked-files=all
-    - git submodule foreach --recursive git status --untracked-files=all
+    - git status --untracked-files=all --ignored=traditional
+    - git submodule foreach --recursive git status --untracked-files=all --ignored=traditional
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
     - PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   artifacts:
@@ -41,8 +41,8 @@ build:clang:linux:amd64:
   dependencies: [ source ]
   image: $CI_REGISTRY/knot/knot-resolver/ci:debian-unstable  # newer Debian for newer Clang
   script:
-    - git status --untracked-files=all
-    - git submodule foreach --recursive git status --untracked-files=all
+    - git status --untracked-files=all --ignored=traditional
+    - git submodule foreach --recursive git status --untracked-files=all --ignored=traditional
     - CXX=clang++-5.0 CC=clang-5.0 PREFIX=$(pwd)/.local make -k all "CFLAGS=-Werror -Wno-error=unused-command-line-argument"
     - CXX=clang++-5.0 CC=clang-5.0 PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   tags:
