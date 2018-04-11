@@ -25,6 +25,7 @@ build:linux:amd64:
   stage: build
   dependencies: [ source ]
   script:
+    - git submodule foreach --recursive git status --untracked-files=all
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
     - PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   artifacts:
