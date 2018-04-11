@@ -16,9 +16,10 @@ build:linux:amd64:
   stage: build
   dependencies: []
   script:
-    - git status
+    - git status; git submodule status --recursive
+    - git submodule foreach --recursive git clean -fdx
+    - git status; git submodule status --recursive
     - git diff
-    - git submodule status
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
     - PREFIX=$(pwd)/.local make install CFLAGS=-Werror
   artifacts:
