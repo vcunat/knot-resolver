@@ -26,6 +26,7 @@ build:linux:amd64:
   dependencies: [ source ]
   script:
     - ls -ld /usr/include/luajit-*
+    - pkg-config --cflags luajit
     - git status --untracked-files=all
     - git submodule foreach --recursive git status --untracked-files=all
     - PREFIX=$(pwd)/.local make -k all CFLAGS=-Werror
