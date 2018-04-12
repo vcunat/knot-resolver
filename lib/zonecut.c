@@ -117,11 +117,7 @@ int kr_zonecut_copy(struct kr_zonecut *dst, const struct kr_zonecut *src)
 	if (!dst || !src) {
 		return kr_error(EINVAL);
 	}
-	/* Make dst->nsset an empty trie. */
-	if (dst->nsset) {
-		trie_apply(dst->nsset, free_addr_set_cb, dst->pool);
-		trie_clear(dst->nsset);
-	} else {
+	if (!dst->nsset) {
 		dst->nsset = trie_create(dst->pool);
 	}
 	/* Copy the contents, one by one. */
@@ -135,7 +131,9 @@ int kr_zonecut_copy(struct kr_zonecut *dst, const struct kr_zonecut *src)
 			ret = kr_error(ENOMEM);
 			break;
 		}
-		assert(*new_pack == NULL); /* impossible: this key already existed */
+		if (*new_pack) {
+			free_addr_set(*new_pack, dst->pool);
+		}
 		const pack_t *old_pack = *trie_it_val(it);
 		*new_pack = pack_clone(old_pack, dst->pool);
 		if (!*new_pack) {
