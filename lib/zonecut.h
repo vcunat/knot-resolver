@@ -68,6 +68,7 @@ void kr_zonecut_set(struct kr_zonecut *cut, const knot_dname_t *name);
  * @param src source zone cut
  * @return 0 or an error code; If it fails with kr_error(ENOMEM),
  * it may be in a half-filled state, but it's safe to deinit...
+ * @note addresses for names in `src` get replaced and others are left as they were.
  */
 KR_EXPORT
 int kr_zonecut_copy(struct kr_zonecut *dst, const struct kr_zonecut *src);

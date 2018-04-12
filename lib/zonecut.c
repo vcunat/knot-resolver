@@ -131,15 +131,9 @@ int kr_zonecut_copy(struct kr_zonecut *dst, const struct kr_zonecut *src)
 			ret = kr_error(ENOMEM);
 			break;
 		}
-		if (*new_pack) {
-			free_addr_set(*new_pack, dst->pool);
-		}
 		const pack_t *old_pack = *trie_it_val(it);
-		*new_pack = pack_clone(old_pack, dst->pool);
-		if (!*new_pack) {
-			ret = kr_error(ENOMEM);
-			break;
-		}
+		ret = pack_clone(new_pack, old_pack, dst->pool);
+		if (ret) break;
 	}
 	trie_it_free(it);
 	return ret;
