@@ -650,20 +650,20 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 {
 	struct kr_query *query = req->current_query;
 
-	/* Response for minimized QNAME.
-	 * NODATA   => may be empty non-terminal, retry (found zone cut)
-	 * NOERROR  => found zone cut, retry
-	 * NXDOMAIN => parent is zone cut, retry as a workaround for bad authoritatives
-	 */
-	bool is_final = (query->parent == NULL);
-	int pkt_class = kr_response_classify(pkt);
-	if (!knot_dname_is_equal(knot_pkt_qname(pkt), query->sname) &&
-	    (pkt_class & (PKT_NOERROR|PKT_NXDOMAIN|PKT_REFUSED|PKT_NODATA))) {
-		VERBOSE_MSG("<= found cut, retrying with non-minimized name\n");
+	/* Current iterator's minimization can only ask one label below a zone cut.
+	 * Also, some authoritatives additionally don't reply correctly to unexpected
+	 * queries (e.g. empty non-terminals), so we work around that as well. */
+	const knot_dname_t * pkt_qname = knot_pkt_qname(pkt);
+	const bool is_minimized = !knot_dname_is_equal(pkt_qname, query->sname);
+	if (is_minimized && /* and didn't advance */
+	    !knot_dname_is_equal(pkt_qname, query->zone_cut.name)) {
+		/* fall back to disabling minimization */
+		VERBOSE_MSG("<= retrying with non-minimized name\n");
 		query->flags.NO_MINIMIZE = true;
 		return KR_STATE_CONSUME;
 	}
 
+	const int pkt_class = kr_response_classify(pkt);
 	/* This answer didn't improve resolution chain, therefore must be authoritative (relaxed to negative). */
 	if (!is_authoritative(pkt, query)) {
 		if (!(query->flags.FORWARD) &&
@@ -679,10 +679,11 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 	if (state != kr_ok()) {
 		return state;
 	}
+	const bool is_final = (query->parent == NULL);
 	/* Make sure that this is an authoritative answer (even with AA=0) for other layers */
 	knot_wire_set_aa(pkt->wire);
-	/* Either way it resolves current query. */
-	query->flags.RESOLVED = true;
+	/* Either way it resolves current query, except TODO. */
+	query->flags.RESOLVED = !is_minimized;
 	/* Follow canonical name as next SNAME. */
 	if (!knot_dname_is_equal(cname, query->sname)) {
 		/* Check if target record has been already copied */
