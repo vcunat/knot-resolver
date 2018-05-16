@@ -683,7 +683,10 @@ static int process_answer(knot_pkt_t *pkt, struct kr_request *req)
 	/* Make sure that this is an authoritative answer (even with AA=0) for other layers */
 	knot_wire_set_aa(pkt->wire);
 	/* Either way it resolves current query, except TODO. */
-	query->flags.RESOLVED = !is_minimized;
+	if (is_minimized) {
+		return KR_STATE_CONSUME;
+	}
+	query->flags.RESOLVED = true;
 	/* Follow canonical name as next SNAME. */
 	if (!knot_dname_is_equal(cname, query->sname)) {
 		/* Check if target record has been already copied */
