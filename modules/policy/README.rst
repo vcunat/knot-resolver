@@ -22,7 +22,7 @@ A *filter* selects which queries will be affected by specified *action*. There a
   - applies the action if QNAME suffix matches one of suffixes in the table (useful for "is domain in zone" rules),
   uses `Aho-Corasick`_ string matching algorithm `from CloudFlare <https://github.com/cloudflare/lua-aho-corasick>`_ (BSD 3-clause)
 * :any:`policy.suffix_common`
-* ``rpz``
+* ``rpz(default_action, path)``
   - implements a subset of RPZ_ in zonefile format.  See below for details: :any:`policy.rpz`.
 * custom filter function
 
@@ -171,7 +171,7 @@ Most properties (actions, filters) are described above.
   Like suffix match, but you can also provide a common suffix of all matches for faster processing (nil otherwise).
   This function is faster for small suffix tables (in the order of "hundreds").
 
-.. function:: policy.rpz(action, path[, format])
+.. function:: policy.rpz(action, path)
 
   :param action: the default action for match in the zone (e.g. RH-value `.`)
   :param path: path to zone file | database
@@ -183,11 +183,11 @@ Most properties (actions, filters) are described above.
   .. csv-table::
    :header: "Policy Action", "RH Value", "Support"
 
-   "NXDOMAIN", "``.``", "**yes**"
-   "NODATA", "``*.``", "*partial*, implemented as NXDOMAIN"
-   "Unchanged", "``rpz-passthru.``", "**yes**"
-   "Nothing", "``rpz-drop.``", "**yes**"
-   "Truncated", "``rpz-tcp-only.``", "**yes**"
+   "``action`` is used", "``.``", "**yes**"
+   "``action`` is used ", "``*.``", "*partial*"
+   "``policy.PASS``", "``rpz-passthru.``", "**yes**"
+   "``policy.DROP``", "``rpz-drop.``", "**yes**"
+   "``policy.TC``", "``rpz-tcp-only.``", "**yes**"
    "Modified", "anything", "no"
 
   .. csv-table::
