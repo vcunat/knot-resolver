@@ -640,26 +640,37 @@ static int net_tls_padding(lua_State *L)
 
 static int net_tls_sticket_key_salt_string(lua_State *L)
 {
+	struct engine *engine = engine_luaget(L);
+	struct network *net = &engine->net;
+	/* The turn-off case. */
+	if (lua_gettop(L) == 0) {
+		tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
+		net->tls_session_ticket_ctx = NULL;
+		lua_pushboolean(L, true);
+		return 1;
+	}
 
 	if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
-		lua_pushstring(L, "net.tls_sticket_salt_string takes one parameter: (\"salt string\")");
+		lua_pushstring(L,
+			"net.tls_sticket_salt_string takes one parameter: (\"salt string\")");
+		lua_error(L);
+	}
+	size_t salt_len;
+	const char *salt = lua_tolstring(L, 1, &salt_len);
+	if (salt_len < 8 || !salt) {
+		lua_pushstring(L, "net.tls_sticket_salt_string: the salt is way too short");
 		lua_error(L);
 	}
 
-	struct engine *engine = engine_luaget(L);
-	struct network *net = &engine->net;
-	const char *salt = lua_tostring(L, 1);
-	size_t salt_len = strlen(salt);
-	if (net->tls_session_ticket_ctx != NULL) {
+	if (net->tls_session_ticket_ctx) {
 		tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
-		net->tls_session_ticket_ctx = NULL;
 	}
-	if (salt_len) {
-		net->tls_session_ticket_ctx = tls_session_ticket_ctx_create(net->loop, salt, salt_len);
-		if (net->tls_session_ticket_ctx == NULL) {
-			lua_pushstring(L, "net.tls_sticket_salt_string - can't create session ticket context");
-			lua_error(L);
-		}
+	net->tls_session_ticket_ctx =
+		tls_session_ticket_ctx_create(net->loop, salt, salt_len);
+	if (net->tls_session_ticket_ctx == NULL) {
+		lua_pushstring(L,
+			"net.tls_sticket_salt_string - can't create session ticket context");
+		lua_error(L);
 	}
 
 	lua_pushboolean(L, true);
@@ -679,14 +690,16 @@ static int net_tls_sticket_key_salt_string(lua_State *L)
 
 static int net_tls_sticket_key_salt_file(lua_State *L)
 {
-
-	if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
-		lua_pushstring(L, "net.tls_sticket_salt_file takes one parameter: (\"file name\")");
-		lua_error(L);
+	/* The turn-off case. */
+	if (lua_gettop(L) == 0) {
+		return net_tls_sticket_key_salt_string(L);
 	}
 
-	struct engine *engine = engine_luaget(L);
-	struct network *net = &engine->net;
+	if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
+		lua_pushstring(L,
+			"net.tls_sticket_salt_file takes one parameter: (\"file name\")");
+		lua_error(L);
+	}
 
 	const char *file_name = lua_tostring(L, 1);
 	if (strlen(file_name) == 0) {
@@ -696,41 +709,35 @@ static int net_tls_sticket_key_salt_file(lua_State *L)
 
 	FILE *fp = fopen(file_name, "r");
 	if (fp == NULL) {
-		lua_pushstring(L, "net.tls_sticket_salt_file - can't open file '");
-		lua_pushstring(L, file_name);
-		lua_pushstring(L, "' (");
-		lua_pushstring(L, strerror(errno));
-		lua_pushstring(L, ")");
-		lua_concat(L, 5);
+		lua_pushfstring(L, "net.tls_sticket_salt_file - can't open file '%s': %s",
+				file_name, strerror(errno));
 		lua_error(L);
 	}
 
-	char *salt = NULL;
-	size_t salt_buf_len = 0;
-	/* getline() also reads newline characters, if any. */
-	ssize_t salt_len = getline(&salt, &salt_buf_len, fp);
-	if (salt_len < 0) {
-		lua_pushstring(L, "net.tls_sticket_salt_file - error reading from '");
-		lua_pushstring(L, file_name);
-		lua_pushstring(L, "' (");
-		lua_pushstring(L, strerror(errno));
-		lua_pushstring(L, ")");
-		lua_concat(L, 5);
+	char salt_buf[TLS_SESSION_TICKET_SALT_MAX_SIZE];
+	const size_t salt_len = fread(salt_buf, 1, sizeof(salt_buf), fp);
+	if (salt_len < 8) { /* Shorter files can't contain much entropy. */
+		lua_pushfstring(L,
+			"net.tls_sticket_salt_file - error reading from file '%s'"
+			" or it was way too short: %s",
+			file_name, strerror(errno));
 		lua_error(L);
 	}
+	fclose(fp);
+
+	struct engine *engine = engine_luaget(L);
+	struct network *net = &engine->net;
+
 	if (net->tls_session_ticket_ctx != NULL) {
 		tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
-		net->tls_session_ticket_ctx = NULL;
 	}
-	if (salt_len > 0) {
-		net->tls_session_ticket_ctx = tls_session_ticket_ctx_create(net->loop, salt, salt_len);
-		if (net->tls_session_ticket_ctx == NULL) {
-			lua_pushstring(L, "net.tls_sticket_salt_file - can't create session ticket context");
-			lua_error(L);
-		}
+	net->tls_session_ticket_ctx =
+		tls_session_ticket_ctx_create(net->loop, salt_buf, salt_len);
+	if (net->tls_session_ticket_ctx == NULL) {
+		lua_pushstring(L,
+			"net.tls_sticket_salt_file - can't create session ticket context");
+		lua_error(L);
 	}
-	free(salt);
-	fclose(fp);
 	lua_pushboolean(L, true);
 	return 1;
 }

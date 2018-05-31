@@ -164,6 +164,9 @@ int tls_client_ctx_set_params(struct tls_client_ctx_t *ctx,
 /*! Opaque struct used by tls_session_ticket_* functions. */
 struct tls_session_ticket_ctx;
 
+/*! Suggested maximum reasonable salt size. */
+#define TLS_SESSION_TICKET_SALT_MAX_SIZE 1024
+
 /*! Enable session tickets for a server session.  \return error code */
 int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session_t session);
 
