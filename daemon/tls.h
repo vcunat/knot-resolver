@@ -93,8 +93,6 @@ struct tls_client_ctx_t {
 	struct tls_client_paramlist_entry *params;
 };
 
-struct tls_session_ticket_ctx;
-
 /*! Create an empty TLS context in query context */
 struct tls_ctx_t* tls_new(struct worker_ctx *worker);
 
@@ -160,9 +158,19 @@ int tls_client_ctx_set_params(struct tls_client_ctx_t *ctx,
 			      struct tls_client_paramlist_entry *entry,
 			      struct session *session);
 
-/** Create the session ticket context and copy the salt. */
-struct tls_session_ticket_ctx* tls_session_ticket_ctx_create(uv_loop_t *loop,
-							     const char *salt,
-							     size_t salt_len);
-/** Free all resources of the session ticket context. */
+
+/* Session tickets, server side.  Implementation in ./tls_session_ticket-srv.c */
+
+/*! Opaque struct used by tls_session_ticket_* functions. */
+struct tls_session_ticket_ctx;
+
+/*! Enable session tickets for a server session.  \return error code */
+int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session_t session);
+
+/*! Create a session ticket context and initialize it (salt gets copied inside). */
+struct tls_session_ticket_ctx * tls_session_ticket_ctx_create(
+		uv_loop_t *loop, const char *salt, size_t salt_len);
+
+/*! Free all resources of the session ticket context. */
 void tls_session_ticket_ctx_destroy(struct tls_session_ticket_ctx *ctx);
+
