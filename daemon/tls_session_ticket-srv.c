@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include <gnutls/gnutls.h>
 #include <gnutls/crypto.h>
 #include <uv.h>
 
