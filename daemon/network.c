@@ -52,7 +52,8 @@ void network_init(struct network *net, uv_loop_t *loop)
 		net->loop = loop;
 		net->endpoints = map_make(NULL);
 		net->tls_client_params = map_make(NULL);
-		net->tls_session_ticket_ctx = NULL;
+		net->tls_session_ticket_ctx = /* unsync. random, by default */
+			tls_session_ticket_ctx_create(loop, NULL, 0);
 	}
 }
 

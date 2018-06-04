@@ -38,6 +38,8 @@
 #define SESSION_KEY_SIZE 64
 
 #if GNUTLS_VERSION_NUMBER < 0x030400
+	/* It's of little use anyway.  We may get the salt through lua,
+	 * which creates a copy outside of our control. */
 	#define gnutls_memset memset
 #endif
 
@@ -49,10 +51,11 @@
 
 /** Fields are internal to session_ticket_key_* functions. */
 typedef struct tls_session_ticket_ctx {
-	uv_timer_t timer;
-	unsigned char key[SESSION_KEY_SIZE];
-	uint16_t hash_len;
-	char hash_data[];
+	uv_timer_t timer;	/**< timer for rotation of the key */
+	unsigned char key[SESSION_KEY_SIZE]; /**< the key itself */
+	uint16_t hash_len;	/**< length of `hash_data` */
+	uint16_t epoch_shift;	/**< all epochs are shifted by this many seconds */
+	char hash_data[];	/**< data to hash to obtain `key` */
 } tst_ctx_t;
 
 /** Check invariants, based on gnutls version. */
@@ -75,8 +78,9 @@ static bool tst_key_invariants(void)
 /** Create the internal structures and copy the salt. Beware: salt must be kept secure. */
 static tst_ctx_t * tst_key_create(const char *salt, size_t salt_len, uv_loop_t *loop)
 {
-	const size_t hash_len = sizeof(size_t) + salt_len;
-	if (!salt || !salt_len || hash_len > UINT16_MAX || hash_len < salt_len) {
+	const size_t hash_len = salt_len == 0 ? 0 : sizeof(size_t) + salt_len;
+	if (salt_len &&
+	    (!salt || hash_len > UINT16_MAX || hash_len < salt_len)) {
 		assert(!EINVAL);
 		return NULL;
 		/* reasonable salt_len is best enforced in config API */
@@ -85,11 +89,20 @@ static tst_ctx_t * tst_key_create(const char *salt, size_t salt_len, uv_loop_t *
 		assert(!EFAULT);
 		return NULL;
 	}
+
 	tst_ctx_t *key =
 		malloc(offsetof(tst_ctx_t, hash_data) + hash_len);
 	if (!key) return NULL;
 	key->hash_len = hash_len;
-	memcpy(key->hash_data + sizeof(size_t), salt, salt_len);
+	if (salt_len) {
+		memcpy(key->hash_data + sizeof(size_t), salt, salt_len);
+	}
+
+	/* determine epoch_shift, (pseudo-)randomly */
+	const uint16_t rand = salt_len < 2
+		? (unsigned)salt[0] + 256 * (unsigned)salt[1]
+		: kr_rand_uint(0);
+	key->epoch_shift = rand % TST_KEY_LIFETIME;
 
 	if (uv_timer_init(loop, &key->timer) != 0) {
 		free(key);
@@ -102,7 +115,7 @@ static tst_ctx_t * tst_key_create(const char *salt, size_t salt_len, uv_loop_t *
 /** Recompute the session ticket key, deterministically from epoch and salt. */
 static int tst_key_update(tst_ctx_t *key, size_t epoch, bool force_update)
 {
-	if (!key || key->hash_len <= sizeof(size_t)) {
+	if (!key || (key->hash_len && key->hash_len <= sizeof(size_t))) {
 		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
@@ -111,8 +124,24 @@ static int tst_key_update(tst_ctx_t *key, size_t epoch, bool force_update)
 		/* TODO: support mixing endians? */
 	}
 	memcpy(key->hash_data, &epoch, sizeof(size_t));
-	int ret = gnutls_hash_fast(TST_HASH, key->hash_data, key->hash_len, key->key);
-	return ret == 0 ? kr_ok() : kr_error(ret);
+	if (key->hash_len) {
+		/* Deterministic variant of the rotation. */
+		int ret = gnutls_hash_fast(TST_HASH, key->hash_data,
+					   key->hash_len, key->key);
+		return ret == 0 ? kr_ok() : kr_error(ret);
+	}
+	/* Otherwise, random variant of the rotation: generate into key_tmp and copy. */
+	gnutls_datum_t key_tmp = { NULL, 0 };
+	int ret = gnutls_session_ticket_key_generate(&key_tmp);
+	if (!ret) return kr_error(ret);
+	if (key_tmp.size != SESSION_KEY_SIZE) {
+		assert(!EFAULT);
+		return kr_error(EFAULT);
+	}
+	memcpy(key->key, key_tmp.data, SESSION_KEY_SIZE);
+	gnutls_memset(key_tmp.data, 0, SESSION_KEY_SIZE);
+	free(key_tmp.data);
+	return kr_ok();
 }
 
 /** Free all resources of the key (securely). */
@@ -144,7 +173,7 @@ static void tst_key_check(uv_timer_t *timer, bool force_update)
 		return;
 	}
 	uv_update_time(timer->loop); /* to have sync. between real and mono time */
-	const size_t epoch = now.tv_sec / TST_KEY_LIFETIME;
+	const size_t epoch = (now.tv_sec + stst->epoch_shift) / TST_KEY_LIFETIME;
 	/* Update the key; new sessions will fetch it from the location.
 	 * Old ones hopefully can't get broken by that; documentation
 	 * for gnutls_session_ticket_enable_server() doesn't say. */
@@ -154,7 +183,7 @@ static void tst_key_check(uv_timer_t *timer, bool force_update)
 		kr_log_error("[tls] session ticket: failed rotation, ret = %d\n", ret);
 	}
 	/* Reschedule. */
-	const time_t tv_sec_next = (epoch + 1) * TST_KEY_LIFETIME;
+	const time_t tv_sec_next = (epoch + 1) * TST_KEY_LIFETIME - stst->epoch_shift;
 	const uint64_t ms_until_second = 1000 - (now.tv_usec + 501) / 1000;
 	const uint64_t remain_ms = (tv_sec_next - now.tv_sec - 1) * (uint64_t)1000
 				 + ms_until_second;
@@ -182,7 +211,7 @@ int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session
 
 tst_ctx_t * tls_session_ticket_ctx_create(uv_loop_t *loop, const char *salt, size_t salt_len)
 {
-	assert(loop && salt && salt_len);
+	assert(loop && (!salt_len || salt));
 	tst_ctx_t *ctx = tst_key_create(salt, salt_len, loop);
 	if (ctx) {
 		tst_key_check(&ctx->timer, true);

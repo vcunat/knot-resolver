@@ -638,33 +638,32 @@ static int net_tls_padding(lua_State *L)
  *       and therefore won't support session resumption.
  */
 
+/** Shorter salt can't contain much entropy. */
+#define net_tls_sticket_MIN_SALT_LEN 8
+
 static int net_tls_sticket_key_salt_string(lua_State *L)
 {
-	struct engine *engine = engine_luaget(L);
-	struct network *net = &engine->net;
-	/* The turn-off case. */
+	struct network *net = &engine_luaget(L)->net;
+
+	size_t salt_len = 0;
+	const char *salt = NULL;
+
 	if (lua_gettop(L) == 0) {
-		tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
-		net->tls_session_ticket_ctx = NULL;
-		lua_pushboolean(L, true);
-		return 1;
+		/* Keep zero-length salt, implying random key. */
+	} else {
+		if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
+			lua_pushstring(L,
+				"net.tls_sticket_salt_string takes one parameter: (\"salt string\")");
+			lua_error(L);
+		}
+		salt = lua_tolstring(L, 1, &salt_len);
+		if (salt_len < net_tls_sticket_MIN_SALT_LEN || !salt) {
+			lua_pushstring(L, "net.tls_sticket_salt_string: the salt is way too short");
+			lua_error(L);
+		}
 	}
 
-	if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
-		lua_pushstring(L,
-			"net.tls_sticket_salt_string takes one parameter: (\"salt string\")");
-		lua_error(L);
-	}
-	size_t salt_len;
-	const char *salt = lua_tolstring(L, 1, &salt_len);
-	if (salt_len < 8 || !salt) {
-		lua_pushstring(L, "net.tls_sticket_salt_string: the salt is way too short");
-		lua_error(L);
-	}
-
-	if (net->tls_session_ticket_ctx) {
-		tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
-	}
+	tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
 	net->tls_session_ticket_ctx =
 		tls_session_ticket_ctx_create(net->loop, salt, salt_len);
 	if (net->tls_session_ticket_ctx == NULL) {
@@ -690,11 +689,6 @@ static int net_tls_sticket_key_salt_string(lua_State *L)
 
 static int net_tls_sticket_key_salt_file(lua_State *L)
 {
-	/* The turn-off case. */
-	if (lua_gettop(L) == 0) {
-		return net_tls_sticket_key_salt_string(L);
-	}
-
 	if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
 		lua_pushstring(L,
 			"net.tls_sticket_salt_file takes one parameter: (\"file name\")");
@@ -716,7 +710,7 @@ static int net_tls_sticket_key_salt_file(lua_State *L)
 
 	char salt_buf[TLS_SESSION_TICKET_SALT_MAX_SIZE];
 	const size_t salt_len = fread(salt_buf, 1, sizeof(salt_buf), fp);
-	if (salt_len < 8) { /* Shorter files can't contain much entropy. */
+	if (salt_len < net_tls_sticket_MIN_SALT_LEN) {
 		lua_pushfstring(L,
 			"net.tls_sticket_salt_file - error reading from file '%s'"
 			" or it was way too short: %s",
@@ -725,12 +719,9 @@ static int net_tls_sticket_key_salt_file(lua_State *L)
 	}
 	fclose(fp);
 
-	struct engine *engine = engine_luaget(L);
-	struct network *net = &engine->net;
+	struct network *net = &engine_luaget(L)->net;
 
-	if (net->tls_session_ticket_ctx != NULL) {
-		tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
-	}
+	tls_session_ticket_ctx_destroy(net->tls_session_ticket_ctx);
 	net->tls_session_ticket_ctx =
 		tls_session_ticket_ctx_create(net->loop, salt_buf, salt_len);
 	if (net->tls_session_ticket_ctx == NULL) {

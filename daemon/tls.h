@@ -170,10 +170,17 @@ struct tls_session_ticket_ctx;
 /*! Enable session tickets for a server session.  \return error code */
 int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session_t session);
 
-/*! Create a session ticket context and initialize it (salt gets copied inside). */
+/*! Create a session ticket context and initialize it (salt gets copied inside).
+ *
+ * Passing zero-length salt implies using a random key, i.e. not synchronized
+ * between multiple instances.
+ *
+ * Beware that knowledge of the salt (if nonempty) breaks forward secrecy,
+ * so you should rotate the salt regularly and securely erase all past salts.
+ */
 struct tls_session_ticket_ctx * tls_session_ticket_ctx_create(
 		uv_loop_t *loop, const char *salt, size_t salt_len);
 
-/*! Free all resources of the session ticket context. */
+/*! Free all resources of the session ticket context.  NULL is accepted as well. */
 void tls_session_ticket_ctx_destroy(struct tls_session_ticket_ctx *ctx);
 
