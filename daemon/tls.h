@@ -164,22 +164,22 @@ int tls_client_ctx_set_params(struct tls_client_ctx_t *ctx,
 /*! Opaque struct used by tls_session_ticket_* functions. */
 struct tls_session_ticket_ctx;
 
-/*! Suggested maximum reasonable salt size. */
-#define TLS_SESSION_TICKET_SALT_MAX_SIZE 1024
+/*! Suggested maximum reasonable secret length. */
+#define TLS_SESSION_TICKET_SECRET_MAX_LEN 1024
 
 /*! Enable session tickets for a server session.  \return error code */
 int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session_t session);
 
-/*! Create a session ticket context and initialize it (salt gets copied inside).
+/*! Create a session ticket context and initialize it (secret gets copied inside).
  *
- * Passing zero-length salt implies using a random key, i.e. not synchronized
+ * Passing zero-length secret implies using a random key, i.e. not synchronized
  * between multiple instances.
  *
- * Beware that knowledge of the salt (if nonempty) breaks forward secrecy,
- * so you should rotate the salt regularly and securely erase all past salts.
+ * Beware that knowledge of the secret (if nonempty) breaks forward secrecy,
+ * so you should rotate the secret regularly and securely erase all past secrets.
  */
 struct tls_session_ticket_ctx * tls_session_ticket_ctx_create(
-		uv_loop_t *loop, const char *salt, size_t salt_len);
+		uv_loop_t *loop, const char *secret, size_t secret_len);
 
 /*! Free all resources of the session ticket context.  NULL is accepted as well. */
 void tls_session_ticket_ctx_destroy(struct tls_session_ticket_ctx *ctx);

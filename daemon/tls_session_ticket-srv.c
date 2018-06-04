@@ -38,7 +38,7 @@
 #define SESSION_KEY_SIZE 64
 
 #if GNUTLS_VERSION_NUMBER < 0x030400
-	/* It's of little use anyway.  We may get the salt through lua,
+	/* It's of little use anyway.  We may get the secret through lua,
 	 * which creates a copy outside of our control. */
 	#define gnutls_memset memset
 #endif
@@ -75,15 +75,15 @@ static bool tst_key_invariants(void)
 	return ok;
 }
 
-/** Create the internal structures and copy the salt. Beware: salt must be kept secure. */
-static tst_ctx_t * tst_key_create(const char *salt, size_t salt_len, uv_loop_t *loop)
+/** Create the internal structures and copy the secret. Beware: secret must be kept secure. */
+static tst_ctx_t * tst_key_create(const char *secret, size_t secret_len, uv_loop_t *loop)
 {
-	const size_t hash_len = salt_len == 0 ? 0 : sizeof(size_t) + salt_len;
-	if (salt_len &&
-	    (!salt || hash_len > UINT16_MAX || hash_len < salt_len)) {
+	const size_t hash_len = secret_len == 0 ? 0 : sizeof(size_t) + secret_len;
+	if (secret_len &&
+	    (!secret || hash_len > UINT16_MAX || hash_len < secret_len)) {
 		assert(!EINVAL);
 		return NULL;
-		/* reasonable salt_len is best enforced in config API */
+		/* reasonable secret_len is best enforced in config API */
 	}
 	if (!tst_key_invariants()) {
 		assert(!EFAULT);
@@ -94,13 +94,13 @@ static tst_ctx_t * tst_key_create(const char *salt, size_t salt_len, uv_loop_t *
 		malloc(offsetof(tst_ctx_t, hash_data) + hash_len);
 	if (!key) return NULL;
 	key->hash_len = hash_len;
-	if (salt_len) {
-		memcpy(key->hash_data + sizeof(size_t), salt, salt_len);
+	if (secret_len) {
+		memcpy(key->hash_data + sizeof(size_t), secret, secret_len);
 	}
 
 	/* determine epoch_shift, (pseudo-)randomly */
-	const uint16_t rand = salt_len < 2
-		? (unsigned)salt[0] + 256 * (unsigned)salt[1]
+	const uint16_t rand = secret_len < 2
+		? (unsigned)secret[0] + 256 * (unsigned)secret[1]
 		: kr_rand_uint(0);
 	key->epoch_shift = rand % TST_KEY_LIFETIME;
 
@@ -112,7 +112,7 @@ static tst_ctx_t * tst_key_create(const char *salt, size_t salt_len, uv_loop_t *
 	return key;
 }
 
-/** Recompute the session ticket key, deterministically from epoch and salt. */
+/** Recompute the session ticket key, deterministically from epoch and secret. */
 static int tst_key_update(tst_ctx_t *key, size_t epoch, bool force_update)
 {
 	if (!key || (key->hash_len && key->hash_len <= sizeof(size_t))) {
@@ -209,10 +209,10 @@ int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session
 	return gnutls_session_ticket_enable_server(session, &gd);
 }
 
-tst_ctx_t * tls_session_ticket_ctx_create(uv_loop_t *loop, const char *salt, size_t salt_len)
+tst_ctx_t * tls_session_ticket_ctx_create(uv_loop_t *loop, const char *secret, size_t secret_len)
 {
-	assert(loop && (!salt_len || salt));
-	tst_ctx_t *ctx = tst_key_create(salt, salt_len, loop);
+	assert(loop && (!secret_len || secret));
+	tst_ctx_t *ctx = tst_key_create(secret, secret_len, loop);
 	if (ctx) {
 		tst_key_check(&ctx->timer, true);
 	}
