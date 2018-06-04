@@ -485,11 +485,15 @@ For when listening on ``localhost`` just doesn't cut it.
    answer will have size of a multiple of 64 (64, 128, 192, ...).  If
    set to `false` (or a number < 2), it will disable padding entirely.
 
+:c:func:`net_tls_sticket_key_salt_string`
+
 .. function:: net.outgoing_v4([string address])
 
    Get/set the IPv4 address used to perform queries.  There is also ``net.outgoing_v6`` for IPv6.
    The default is ``nil``, which lets the OS choose any address.
 
+.. doxygengroup:: lua_net
+    :content-only:
 
 .. _dnssec-config:
 
