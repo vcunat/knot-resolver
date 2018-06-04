@@ -2,6 +2,11 @@ Security
 --------
 - fix a rare case of zones incorrectly dowgraded to insecure status
 
+New features
+------------
+- TLS session resumption via tickets (rfc5077), both server and client;
+  key rotation on server instances is synchronized without communication
+
 Bugfixes
 --------
 - avoid turning off qname minimization in some cases, e.g. co.uk. (#339)

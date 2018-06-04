@@ -624,24 +624,10 @@ static int net_tls_padding(lua_State *L)
 	return 1;
 }
 
-/* Configure client-side TLS session ticket key generation.
- *
- * note  Don't call from CLI when there are forked kresd instances as it
- *       will break synchronous ticket key regeneration.
- *
- * Expected parameters from lua
- * salt  salt string used for session ticket key generation.
- *       It's guaranteed that all forked kresd instances
- *       with same salt string will always use the same session ticket key
- *       without additional synchronization.
- *       If salt string is empty, kresd won't use session tickets at server side
- *       and therefore won't support session resumption.
- */
-
 /** Shorter salt can't contain much entropy. */
 #define net_tls_sticket_MIN_SALT_LEN 8
 
-static int net_tls_sticket_key_salt_string(lua_State *L)
+static int net_tls_sticket_secret_string(lua_State *L)
 {
 	struct network *net = &engine_luaget(L)->net;
 
@@ -676,18 +662,7 @@ static int net_tls_sticket_key_salt_string(lua_State *L)
 	return 1;
 }
 
-/* Configure client-side TLS session ticket key generation.
- *
- * note  Don't call from CLI when there are forked kresd instances as it
- *       will break synchronous ticket key regeneration.
- *
- * Expected parameters from lua
- * file  text file containing salt string.
- *       If file is empty, resolver won't use session tickets at server side
- *       and therefore won't support session resumption.
- */
-
-static int net_tls_sticket_key_salt_file(lua_State *L)
+static int net_tls_sticket_secret_file(lua_State *L)
 {
 	if (lua_gettop(L) != 1 || !lua_isstring(L, 1)) {
 		lua_pushstring(L,
@@ -803,8 +778,8 @@ int lib_net(lua_State *L)
 		{ "tls_server",   net_tls },
 		{ "tls_client",   net_tls_client },
 		{ "tls_padding",  net_tls_padding },
-		{ "tls_sticket_salt_string", net_tls_sticket_key_salt_string },
-		{ "tls_sticket_salt_file", net_tls_sticket_key_salt_file },
+		{ "tls_sticket_secret", net_tls_sticket_secret_string },
+		{ "tls_sticket_secret_file", net_tls_sticket_secret_file },
 		{ "outgoing_v4",  net_outgoing_v4 },
 		{ "outgoing_v6",  net_outgoing_v6 },
 		{ NULL, NULL }
