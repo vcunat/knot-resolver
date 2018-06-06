@@ -4,8 +4,7 @@ Security
 
 New features
 ------------
-- TLS session resumption via tickets (rfc5077), both server and client;
-  key rotation on server instances is synchronized without communication
+- TLS session resumption (RFC 5077), both server and client (!585, #105)
 
 Bugfixes
 --------

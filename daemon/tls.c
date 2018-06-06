@@ -159,15 +159,7 @@ struct tls_ctx_t *tls_new(struct worker_ctx *worker)
 	gnutls_transport_set_push_function(tls->c.tls_session, worker_gnutls_push);
 	gnutls_transport_set_ptr(tls->c.tls_session, tls);
 
-	if (net->tls_session_ticket_ctx) {
-		err = tls_session_ticket_enable(net->tls_session_ticket_ctx,
-						tls->c.tls_session);
-		if (err) {
-			kr_log_error("[tls] failed to enable session tickets: %s (%d)\n",
-					gnutls_strerror_name(err), err);
-			/* but continue without tickets */
-		}
-	}
+	tls_session_ticket_enable(net->tls_session_ticket_ctx, tls->c.tls_session);
 
 	return tls;
 }

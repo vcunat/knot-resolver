@@ -498,7 +498,7 @@ TLS server configuration
 
    Set secret for TLS session resumption via tickets, by :rfc:`5077`.
 
-   The server-side key is rotated every hour.
+   The server-side key is rotated once per hour.
    By default or if called without secret, the key is random.
    That is good for long-term forward secrecy, but multiple kresd instances
    won't be able to resume each other's sessions.
@@ -509,6 +509,10 @@ TLS server configuration
    and it should still be occasionally rotated manually (and securely forgotten),
    to reduce the scope of privacy leak in case the
    `secret leaks eventually <https://en.wikipedia.org/wiki/Forward_secrecy>`_.
+
+   .. warning:: setting the secret is probably too risky with TLS <= 1.2.
+      At this moment no gnutls stable release even supports TLS 1.3.
+      Therefore setting the secrets should be considered experimental for now.
 
 .. function:: net.tls_sticket_secret_file([string with path to a file containing pre-shared secret])
 

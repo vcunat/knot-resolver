@@ -167,9 +167,6 @@ struct tls_session_ticket_ctx;
 /*! Suggested maximum reasonable secret length. */
 #define TLS_SESSION_TICKET_SECRET_MAX_LEN 1024
 
-/*! Enable session tickets for a server session.  \return error code */
-int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session_t session);
-
 /*! Create a session ticket context and initialize it (secret gets copied inside).
  *
  * Passing zero-length secret implies using a random key, i.e. not synchronized
@@ -177,9 +174,13 @@ int tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session
  *
  * Beware that knowledge of the secret (if nonempty) breaks forward secrecy,
  * so you should rotate the secret regularly and securely erase all past secrets.
+ * With TLS < 1.3 it's probably too risky to set nonempty secret.
  */
 struct tls_session_ticket_ctx * tls_session_ticket_ctx_create(
 		uv_loop_t *loop, const char *secret, size_t secret_len);
+
+/*! Try to enable session tickets for a server session. */
+void tls_session_ticket_enable(struct tls_session_ticket_ctx *ctx, gnutls_session_t session);
 
 /*! Free all resources of the session ticket context.  NULL is accepted as well. */
 void tls_session_ticket_ctx_destroy(struct tls_session_ticket_ctx *ctx);
