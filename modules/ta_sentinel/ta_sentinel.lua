@@ -15,12 +15,12 @@ function M.layer.finish(state, req, pkt)
 	if qf.CACHED or not qf.DNSSEC_WANT or qf.DNSSEC_INSECURE
 			or qf.DNSSEC_BOGUS or kreq.answer:cd() then
 		return state end -- no trust anchor or insecure domain, exit
+		-- qf.CACHED: in that case, DNSSEC_WANT is false if not requested by client
 
 	local kpkt = kres.pkt_t(pkt)
-	if kpkt:qtype() ~= kres.type.A and kpkt:qtype() ~= kres.type.AAAA then
-		return state end
-
-	if kpkt:qclass() ~= kres.class.IN then
+	local matching = ((kpkt:qtype() == kres.type.A  or  kpkt:qtype() == kres.type.AAAA)
+					  and  kpkt:qclass() == kres.class.IN)
+	if not matching then
 		return state end
 
 	-- fast filter by the length of the first label
