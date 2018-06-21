@@ -25,7 +25,9 @@ extern const knot_dump_style_t KNOT_DUMP_STYLE_DEFAULT;
 typedef void knot_db_t;
 struct kr_cdb_api {};
 struct lru {};
+typedef unsigned int uint;
 "
+# ^^ For some reason gdb now prefers to print `uint` in some cases.
 
 # The generator doesn't work well with typedefs of functions.
 printf "
@@ -141,6 +143,7 @@ EOF
 	kr_rplan_push
 	kr_rplan_pop
 	kr_rplan_resolved
+	kr_rplan_last
 # Nameservers
 	kr_nsrep_set
 # Utils
@@ -166,7 +169,6 @@ EOF
 	kr_zonecut_add
 	kr_zonecut_is_empty
 	kr_zonecut_set
-	kr_zonecut_find_nsname
 	kr_now
 	lru_free_items_impl
 	lru_create_impl

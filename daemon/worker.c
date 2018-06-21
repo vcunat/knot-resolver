@@ -531,6 +531,7 @@ static struct request_ctx *request_create(struct worker_ctx *worker,
 
 	struct kr_request *req = &ctx->req;
 	req->pool = pool;
+	req->vars_ref = LUA_NOREF;
 
 	/* Remember query source addr */
 	if (!addr || (addr->sa_family != AF_INET && addr->sa_family != AF_INET6)) {
@@ -614,6 +615,20 @@ static int request_start(struct request_ctx *ctx, knot_pkt_t *query)
 static void request_free(struct request_ctx *ctx)
 {
 	struct worker_ctx *worker = ctx->worker;
+	/* Dereference any Lua vars table if exists */
+	if (ctx->req.vars_ref != LUA_NOREF) {
+		lua_State *L = worker->engine->L;
+		/* Get worker variables table */
+		lua_rawgeti(L, LUA_REGISTRYINDEX, worker->vars_table_ref);
+		/* Get next free element (position 0) and store it under current reference (forming a list) */
+		lua_rawgeti(L, -1, 0);
+		lua_rawseti(L, -2, ctx->req.vars_ref);
+		/* Set current reference as the next free element */
+		lua_pushinteger(L, ctx->req.vars_ref);
+		lua_rawseti(L, -2, 0);
+		lua_pop(L, 1);
+		ctx->req.vars_ref = LUA_NOREF;
+	}
 	/* Return mempool to ring or free it if it's full */
 	pool_release(worker, ctx->req.pool.ctx);
 	/* @note The 'task' is invalidated from now on. */
@@ -1082,15 +1097,38 @@ static int session_tls_hs_cb(struct session *session, int status)
 	struct worker_ctx *worker = get_worker();
 	union inaddr *peer = &session->peer;
 	int deletion_res = worker_del_tcp_waiting(worker, &peer->ip);
+	int ret = kr_ok();
 
 	if (status) {
 		kr_nsrep_update_rtt(NULL, &peer->ip, KR_NS_DEAD,
 				    worker->engine->resolver.cache_rtt,
 				    KR_NS_UPDATE_NORESET);
-		return kr_ok();
+		return ret;
 	}
 
-	int ret = worker_add_tcp_connected(worker, &peer->ip, session);
+	/* handshake was completed successfully */
+	struct tls_client_ctx_t *tls_client_ctx = session->tls_client_ctx;
+	struct tls_client_paramlist_entry *tls_params = tls_client_ctx->params;
+	gnutls_session_t tls_session = tls_client_ctx->c.tls_session;
+	if (gnutls_session_is_resumed(tls_session) != 0) {
+		kr_log_verbose("[tls_client] TLS session has resumed\n");
+	} else {
+		kr_log_verbose("[tls_client] TLS session has not resumed\n");
+		/* session wasn't resumed, delete old session data ... */
+		if (tls_params->session_data.data != NULL) {
+			gnutls_free(tls_params->session_data.data);
+			tls_params->session_data.data = NULL;
+			tls_params->session_data.size = 0;
+		}
+		/* ... and get the new session data */
+		gnutls_datum_t tls_session_data = { NULL, 0 };
+		ret = gnutls_session_get_data2(tls_session, &tls_session_data);
+		if (ret == 0) {
+			tls_params->session_data = tls_session_data;
+		}
+	}
+
+	ret = worker_add_tcp_connected(worker, &peer->ip, session);
 	if (deletion_res == kr_ok() && ret == kr_ok()) {
 		ret = session_next_waiting_send(session);
 	} else {
@@ -2523,6 +2561,11 @@ struct worker_ctx *worker_create(struct engine *engine, knot_mm_t *pool,
 	lua_setfield(engine->L, -2, "pid");
 	lua_pushnumber(engine->L, worker_count);
 	lua_setfield(engine->L, -2, "count");
+	/* Register table for worker per-request variables */
+	lua_newtable(engine->L);
+	lua_setfield(engine->L, -2, "vars");
+	lua_getfield(engine->L, -1, "vars");
+	worker->vars_table_ref = luaL_ref(engine->L, LUA_REGISTRYINDEX);
 	lua_pop(engine->L, 1);
 	return worker;
 }
