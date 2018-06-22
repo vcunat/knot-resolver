@@ -1,5 +1,6 @@
 local M = {}
 M.layer = {}
+local ffi = require('ffi')
 
 function M.layer.finish(state, req, pkt)
 	local kreq = kres.request_t(req)
@@ -10,12 +11,6 @@ function M.layer.finish(state, req, pkt)
 	local qry = kreq:resolved()
 	if qry.parent ~= nil then
 		return state end -- an internal query, exit
-
-	local qf = qry.flags
-	if qf.CACHED or not qf.DNSSEC_WANT or qf.DNSSEC_INSECURE
-			or qf.DNSSEC_BOGUS or kreq.answer:cd() then
-		return state end -- no trust anchor or insecure domain, exit
-		-- qf.CACHED: in that case, DNSSEC_WANT is false if not requested by client
 
 	local kpkt = kres.pkt_t(pkt)
 	local matching = ((kpkt:qtype() == kres.type.A  or  kpkt:qtype() == kres.type.AAAA)
@@ -38,6 +33,14 @@ function M.layer.finish(state, req, pkt)
 		sentype = false
 		keytag = qname:match('^root%-key%-sentinel%-not%-ta%-(%x+)%.')
 	end
+
+	if kreq.rank ~= ffi.C.KR_RANK_SECURE or kreq.answer:cd() then
+		if verbose() then
+			log('[ta_sentinel] name+type OK but not AD+CD conditions')
+		end
+		return state
+	end
+
 	-- check keytag from the label
 	keytag = tonumber(keytag)
 	if not keytag or math.floor(keytag) ~= keytag then

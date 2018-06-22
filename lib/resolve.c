@@ -666,6 +666,7 @@ static int answer_finalize(struct kr_request *request, int state)
 
 	/* No detailed analysis ATM, just _SECURE or not.
 	 * LATER: request->rank might better be computed in validator's finish phase. */
+	VERBOSE_MSG(NULL, "  AD: request%s classified as SECURE\n", secure ? "" : " NOT");
 	request->rank = secure ? KR_RANK_SECURE : KR_RANK_INITIAL;
 
 	/* Clear AD if not secure.  ATM answer has AD=1 if requested secured answer. */
