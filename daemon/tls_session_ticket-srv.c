@@ -34,7 +34,11 @@
 
 /** Value from gnutls:lib/ext/session_ticket.c
  * Beware: changing this needs to change the hashing implementation. */
-#define SESSION_KEY_SIZE 64
+#if GNUTLS_VERSION_NUMBER >= 0x030500
+	#define SESSION_KEY_SIZE 64
+#else
+	#define SESSION_KEY_SIZE 32
+#endif
 
 /** Compile-time support for setting the secret. */
 /* This is not secure with TLS <= 1.2 but TLS 1.3 and secure configuration
@@ -240,10 +244,6 @@ tst_ctx_t * tls_session_ticket_ctx_create(uv_loop_t *loop, const char *secret,
 					  size_t secret_len)
 {
 	assert(loop && (!secret_len || secret));
-	#if GNUTLS_VERSION_NUMBER < 0x030500
-		/* We would need different SESSION_KEY_SIZE; avoid assert. */
-		return NULL;
-	#endif
 	tst_ctx_t *ctx = tst_key_create(secret, secret_len, loop);
 	if (ctx) {
 		tst_key_check(&ctx->timer, true);
