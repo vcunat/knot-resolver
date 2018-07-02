@@ -229,12 +229,7 @@ static const char * find_leq_NSEC1(struct kr_cache *cache, const struct kr_query
 		return "EINVAL";
 	}
 	ret = kr_dname_lf(chs, next, false);
-#if KNOT_VERSION_HEX >= ((2 << 16) | (7 << 8) | 0)
-	/* We have to lower-case it with libknot >= 2.7; see also RFC 6840 5.1. */
-	if (!ret) {
-		ret = knot_dname_to_lower(next);
-	}
-#endif
+	/* FIXME: lower-case chs; see also RFC 6840 5.1. */
 	if (ret) {
 		assert(false);
 		return "ERROR";
@@ -353,13 +348,11 @@ int nsec1_encloser(struct key *k, struct answer *ans,
 	 */
 	knot_dname_t next[KNOT_DNAME_MAXLEN];
 	int ret = knot_dname_to_wire(next, knot_nsec_next(&nsec_rr->rrs), sizeof(next));
-	if (ret >= 0) {
-		ret = knot_dname_to_lower(next);
-	}
 	if (ret < 0) {
 		assert(!ret);
 		return kr_error(ret);
 	}
+	knot_dname_to_lower(next);
 	*clencl_labels = MAX(
 		nsec_matched,
 		knot_dname_matched_labels(qry->sname, next)
