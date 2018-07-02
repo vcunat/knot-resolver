@@ -361,7 +361,7 @@ ffi.metatype( knot_rrset_t, {
 		end,
 		ttl = function(rr)
 			assert(ffi.istype(knot_rrset_t, rr))
-			return tonumber(knot.knot_rrset_ttl(rr))
+			return tonumber(rr.ttl)
 		end,
 		class = function(rr, val)
 			assert(ffi.istype(knot_rrset_t, rr))
