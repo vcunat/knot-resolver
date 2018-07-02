@@ -22,7 +22,7 @@
 #include <libknot/rrset.h>
 #include <libknot/rrtype/nsec.h>
 #include <libknot/rrtype/rrsig.h>
-#include <dnssec/error.h>
+#include <libdnssec/error.h>
 
 #include "lib/defines.h"
 #include "lib/dnssec/nsec.h"
