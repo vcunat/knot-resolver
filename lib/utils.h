@@ -420,10 +420,12 @@ int knot_dname_lf2wire(knot_dname_t *dst, uint8_t len, const uint8_t *lf);
  */
 static inline int kr_dname_lf(uint8_t *dst, const knot_dname_t *src, bool add_wildcard)
 {
-	int ret = knot_dname_lf(dst, src, NULL);
-	if (ret)
-		return ret;
-	int len = dst[0];
+	knot_dname_storage_t right_aligned_dst;
+	uint8_t *right_aligned_dname_start = knot_dname_lf(src, right_aligned_dst);
+	if (!right_aligned_dname_start) {
+		return kr_error(EINVAL);
+	}
+	int len = right_aligned_dname_start[0];
 	if (len == 1)
 		len = 0;
 	if (add_wildcard) {
@@ -434,5 +436,6 @@ static inline int kr_dname_lf(uint8_t *dst, const knot_dname_t *src, bool add_wi
 		len += 2;
 	}
 	dst[0] = len;
+	memcpy(dst, right_aligned_dname_start, len + 1);
 	return KNOT_EOK;
 };
