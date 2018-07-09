@@ -161,14 +161,14 @@ static int update_nsaddr(const knot_rrset_t *rr, struct kr_query *query, int *gl
 		char name_str[KR_DNAME_STR_MAXLEN];
 		char addr_str[INET6_ADDRSTRLEN];
 		WITH_VERBOSE(query) {
-			const int af = (rdata.len == sizeof(struct in_addr)) ?
+			const int af = (rdata->len == sizeof(struct in_addr)) ?
 				       AF_INET : AF_INET6;
 			knot_dname_to_str(name_str, rr->owner, sizeof(name_str));
 			name_str[sizeof(name_str) - 1] = 0;
-			inet_ntop(af, rdata.data, addr_str, sizeof(addr_str));
+			inet_ntop(af, rdata->data, addr_str, sizeof(addr_str));
 		}
 		if (!(query->flags.ALLOW_LOCAL) &&
-			!is_valid_addr(rdata.data, rdata.len)) {
+			!is_valid_addr(rdata->data, rdata->len)) {
 			QVERBOSE_MSG(query, "<= ignoring invalid glue for "
 				     "'%s': '%s'\n", name_str, addr_str);
 			return KR_STATE_CONSUME; /* Ignore invalid addresses */
