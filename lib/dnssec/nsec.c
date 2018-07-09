@@ -15,6 +15,7 @@
  */
 
 #include <assert.h>
+#include <stdlib.h>
 
 #include <libknot/descriptor.h>
 #include <libknot/dname.h>
