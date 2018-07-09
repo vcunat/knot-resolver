@@ -191,7 +191,7 @@ static const knot_rdata_t * addr2rdata(const char *addr) {
 	static knot_rdata_t rdata_arr[RDATA_ARR_MAX];
 	size_t addr_len = kr_inaddr_len((struct sockaddr *)&ss);
 	const uint8_t *raw_addr = (const uint8_t *)kr_inaddr((struct sockaddr *)&ss);
-	knot_rdata_init(rdata_arr, addr_len, raw_addr, 0);
+	knot_rdata_init(rdata_arr, addr_len, raw_addr);
 	return rdata_arr;
 }
 
@@ -281,7 +281,7 @@ static int add_reverse_pair(struct kr_zonecut *hints, const char *name, const ch
 
 	/* Build RDATA */
 	knot_rdata_t rdata[RDATA_ARR_MAX];
-	knot_rdata_init(rdata, knot_dname_size(ptr_name), ptr_name, 0);
+	knot_rdata_init(rdata, knot_dname_size(ptr_name), ptr_name);
 
 	return kr_zonecut_add(hints, key, rdata);
 }
@@ -298,7 +298,7 @@ static int del_pair(struct hints_data *data, const char *name, const char *addr)
 		return kr_error(EINVAL);
 	}
 	knot_rdata_t ptr_rdata[RDATA_ARR_MAX];
-	knot_rdata_init(ptr_rdata, knot_dname_size(key), key, 0);
+	knot_rdata_init(ptr_rdata, knot_dname_size(key), key);
 
         if (addr) {
 		/* Remove the pair. */
