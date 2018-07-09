@@ -87,14 +87,14 @@ static int satisfy_reverse(struct kr_zonecut *hints, knot_pkt_t *pkt, struct kr_
 	}
 	knot_dname_t *qname = knot_dname_copy(qry->sname, &pkt->mm);
 	knot_rrset_t rr;
-	knot_rrset_init(&rr, qname, KNOT_RRTYPE_PTR, KNOT_CLASS_IN);
+	knot_rrset_init(&rr, qname, KNOT_RRTYPE_PTR, KNOT_CLASS_IN, 0);
 
 	/* Append address records from hints */
 	uint8_t *addr = pack_last(*addr_set);
 	if (addr != NULL) {
 		size_t len = pack_obj_len(addr);
 		void *addr_val = pack_obj_val(addr);
-		knot_rrset_add_rdata(&rr, addr_val, len, 0, &pkt->mm);
+		knot_rrset_add_rdata(&rr, addr_val, len, &pkt->mm);
 	}
 
 	return put_answer(pkt, qry, &rr, use_nodata);
@@ -109,7 +109,7 @@ static int satisfy_forward(struct kr_zonecut *hints, knot_pkt_t *pkt, struct kr_
 	}
 	knot_dname_t *qname = knot_dname_copy(qry->sname, &pkt->mm);
 	knot_rrset_t rr;
-	knot_rrset_init(&rr, qname, qry->stype, qry->sclass);
+	knot_rrset_init(&rr, qname, qry->stype, qry->sclass, 0);
 	size_t family_len = sizeof(struct in_addr);
 	if (rr.type == KNOT_RRTYPE_AAAA) {
 		family_len = sizeof(struct in6_addr);
@@ -121,7 +121,7 @@ static int satisfy_forward(struct kr_zonecut *hints, knot_pkt_t *pkt, struct kr_
 		size_t len = pack_obj_len(addr);
 		void *addr_val = pack_obj_val(addr);
 		if (len == family_len) {
-			knot_rrset_add_rdata(&rr, addr_val, len, 0, &pkt->mm);
+			knot_rrset_add_rdata(&rr, addr_val, len, &pkt->mm);
 		}
 		addr = pack_obj_next(addr);
 	}
