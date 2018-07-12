@@ -533,6 +533,14 @@ static ssize_t stash_rrset(struct kr_cache *cache, const struct kr_query *qry,
 	}
 	assert(entry_h_consistent(val_new_entry, rr->type));
 
+	{ // XXX debug
+	kr_cache_sync(cache);
+	knot_db_val_t val = { NULL, 0 };
+	ret = cache_op(cache, read, &key, &val, 1);
+	entry_list_t el;
+	entry_list_parse(val, el);
+	}
+
 	/* Update metrics */
 	cache->stats.insert += 1;
 
