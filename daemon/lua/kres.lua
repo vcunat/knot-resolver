@@ -418,7 +418,7 @@ ffi.metatype( knot_rrset_t, {
 		-- Return RDATA count for this RR set
 		rdcount = function(rr)
 			assert(ffi.istype(knot_rrset_t, rr))
-			return tonumber(rr.rrs.rr_count)
+			return tonumber(rr.rrs.count)
 		end,
 		-- Add binary RDATA to the RR set
 		add_rdata = function (rr, rdata, rdlen)
