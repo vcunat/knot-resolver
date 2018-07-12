@@ -342,6 +342,7 @@ ffi.metatype( knot_rrset_t, {
 	-- Create a new empty RR set object with an allocated owner and a destructor
 	__new = function (ct, owner, rrtype, rrclass, ttl)
 		local rr = ffi.new(ct)
+		print(owner) -- FIXME: something is wrong about owner
 		C.kr_rrset_init(rr,
 			owner and knot.knot_dname_copy(owner, nil),
 			rrtype or 0,
