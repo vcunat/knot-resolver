@@ -330,7 +330,7 @@ end
 -- RR sets created in Lua must have a destructor to release allocated memory
 local function rrset_free(rr)
 	if rr._owner ~= nil then ffi.C.free(rr._owner) end
-	if rr:rdcount() > 0 then ffi.C.free(rr.rrs.data) end
+	if rr:rdcount() > 0 then ffi.C.free(rr.rrs.rdata) end
 end
 
 -- Metatype for RR set.  Beware, the indexing is 0-based (rdata, get, tostring).
