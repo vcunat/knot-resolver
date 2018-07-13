@@ -443,7 +443,7 @@ static inline int kr_dname_lf(uint8_t *dst, const knot_dname_t *src, bool add_wi
 		len += 2;
 	}
 	dst[0] = len;
-	memcpy(dst, right_aligned_dname_start, len + 1);
+	memcpy(dst + 1, right_aligned_dname_start, len);
 	return KNOT_EOK;
 };
 
