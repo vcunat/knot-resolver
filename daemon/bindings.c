@@ -1067,7 +1067,7 @@ static int cache_close(lua_State *L)
 }
 
 /** @internal Prefix walk. */
-static int cache_prefixed(struct kr_cache *cache, const char *prefix,
+static int cache_prefixed(struct kr_cache *cache, const char *prefix, bool exact_name,
 			  knot_db_val_t keyval[][2], int maxcount)
 {
 	/* Convert to domain name */
@@ -1076,40 +1076,7 @@ static int cache_prefixed(struct kr_cache *cache, const char *prefix,
 		return kr_error(EINVAL);
 	}
 	/* Start prefix search */
-	return kr_cache_match(cache, buf, keyval, maxcount);
-}
-
-/** @internal Delete iterated key. */
-static int cache_remove_prefix(struct kr_cache *cache, const char *prefix)
-{
-	/* Check if we can remove */
-	if (!cache || !cache->api || !cache->api->remove) {
-		return kr_error(ENOSYS);
-	}
-	knot_db_val_t keyval[1000][2], keys[1000];
-	int ret = cache_prefixed(cache, prefix, keyval, 1000);
-	if (ret < 0) {
-		return ret;
-	}
-	/* Duplicate the key strings, as deletion may invalidate the pointers. */
-	int i;
-	for (i = 0; i < ret; ++i) {
-		keys[i].len = keyval[i][0].len;
-		keys[i].data = malloc(keys[i].len);
-		if (!keys[i].data) {
-			ret = kr_error(ENOMEM);
-			goto cleanup;
-		}
-		memcpy(keys[i].data, keyval[i][0].data, keys[i].len);
-	}
-	cache->api->remove(cache->db, keys, ret);
-	kr_cache_sync(cache);
-cleanup:
-	/* Free keys */
-	while (--i >= 0) {
-		free(keys[i].data);
-	}
-	return ret;
+	return kr_cache_match(cache, buf, exact_name, keyval, maxcount);
 }
 
 /** Prune expired/invalid records. */
@@ -1142,8 +1109,8 @@ static int cache_prune(lua_State *L)
 	return 1;
 }
 
-/** Clear all records. */
-static int cache_clear(lua_State *L)
+/** Clear everything. */
+static int cache_clear_everything(lua_State *L)
 {
 	struct engine *engine = engine_luaget(L);
 	struct kr_cache *cache = &engine->resolver.cache;
@@ -1151,25 +1118,7 @@ static int cache_clear(lua_State *L)
 		return 0;
 	}
 
-	/* Check parameters */
-	const char *prefix = NULL;
-	int n = lua_gettop(L);
-	if (n >= 1 && lua_isstring(L, 1)) {
-		prefix = lua_tostring(L, 1);
-	}
-
-	/* Clear a sub-tree in cache. */
-	if (prefix && strlen(prefix) > 0) {
-		int ret = cache_remove_prefix(cache, prefix);
-		if (ret < 0) {
-			format_error(L, kr_strerror(ret));
-			lua_error(L);
-		}
-		lua_pushinteger(L, ret);
-		return 1;
-	}
-
-	/* Clear cache. */
+	/* Clear records and packets. */
 	int ret = kr_cache_clear(cache);
 	if (ret < 0) {
 		format_error(L, kr_strerror(ret));
@@ -1234,7 +1183,7 @@ static int cache_get(lua_State *L)
 	/* Retrieve set of keys */
 	const char *prefix = lua_tostring(L, 1);
 	knot_db_val_t keyval[100][2];
-	int ret = cache_prefixed(cache, prefix, keyval, 100);
+	int ret = cache_prefixed(cache, prefix, false/*FIXME*/, keyval, 100);
 	if (ret < 0) {
 		format_error(L, kr_strerror(ret));
 		lua_error(L);
@@ -1374,8 +1323,8 @@ int lib_cache(lua_State *L)
 		{ "open",   cache_open },
 		{ "close",  cache_close },
 		{ "prune",  cache_prune },
-		{ "clear",  cache_clear },
-		{ "get",    cache_get },
+		{ "clear_everything", cache_clear_everything },
+		{ "get",     cache_get },
 		{ "max_ttl", cache_max_ttl },
 		{ "min_ttl", cache_min_ttl },
 		{ "ns_tout", cache_ns_tout },
