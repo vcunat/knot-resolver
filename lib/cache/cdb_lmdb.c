@@ -562,7 +562,7 @@ static int cdb_remove(knot_db_t *db, knot_db_val_t *key, int maxcount)
 	return ret;
 }
 
-static int cdb_match(knot_db_t *db, knot_db_val_t *key, knot_db_val_t *val, int maxcount)
+static int cdb_match(knot_db_t *db, knot_db_val_t *key, knot_db_val_t keyval[][2], int maxcount)
 {
 	struct lmdb_env *env = db;
 	MDB_txn *txn = NULL;
@@ -594,7 +594,8 @@ static int cdb_match(knot_db_t *db, knot_db_val_t *key, knot_db_val_t *val, int 
 		}
 		/* Add to result set */
 		if (results < maxcount) {
-			val[results] = val_mdb2knot(cur_key);
+			keyval[results][0] = val_mdb2knot(cur_key);
+			keyval[results][1] = val_mdb2knot(cur_val);
 			++results;
 		} else {
 			break;

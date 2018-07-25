@@ -1067,50 +1067,47 @@ static int cache_close(lua_State *L)
 }
 
 /** @internal Prefix walk. */
-static int cache_prefixed(struct kr_cache *cache, const char *args, knot_db_val_t *results, int maxresults)
+static int cache_prefixed(struct kr_cache *cache, const char *prefix,
+			  knot_db_val_t keyval[][2], int maxcount)
 {
 	/* Convert to domain name */
 	uint8_t buf[KNOT_DNAME_MAXLEN];
-	if (!knot_dname_from_str(buf, args, sizeof(buf))) {
+	if (!knot_dname_from_str(buf, prefix, sizeof(buf))) {
 		return kr_error(EINVAL);
 	}
-
 	/* Start prefix search */
-	int ret = kr_cache_match(cache, buf, results, maxresults);
-	kr_cache_sync(cache);
-	return ret;
+	return kr_cache_match(cache, buf, keyval, maxcount);
 }
 
 /** @internal Delete iterated key. */
-static int cache_remove_prefix(struct kr_cache *cache, const char *args)
+static int cache_remove_prefix(struct kr_cache *cache, const char *prefix)
 {
 	/* Check if we can remove */
 	if (!cache || !cache->api || !cache->api->remove) {
 		return kr_error(ENOSYS);
 	}
-	knot_db_val_t result_set[1000];
-	int ret = cache_prefixed(cache, args, result_set, 1000);
+	knot_db_val_t keyval[1000][2], keys[1000];
+	int ret = cache_prefixed(cache, prefix, keyval, 1000);
 	if (ret < 0) {
 		return ret;
 	}
-	/* Duplicate result set as we're going to remove it
-	 * which will invalidate result set. */
+	/* Duplicate the key strings, as deletion may invalidate the pointers. */
 	int i;
 	for (i = 0; i < ret; ++i) {
-		void *dst = malloc(result_set[i].len);
-		if (!dst) {
+		keys[i].len = keyval[i][0].len;
+		keys[i].data = malloc(keys[i].len);
+		if (!keys[i].data) {
 			ret = kr_error(ENOMEM);
 			goto cleanup;
 		}
-		memcpy(dst, result_set[i].data, result_set[i].len);
-		result_set[i].data = dst;
+		memcpy(keys[i].data, keyval[i][0].data, keys[i].len);
 	}
-	cache->api->remove(cache->db, result_set, ret);
+	cache->api->remove(cache->db, keys, ret);
 	kr_cache_sync(cache);
 cleanup:
 	/* Free keys */
 	while (--i >= 0) {
-		free(result_set[i].data);
+		free(keys[i].data);
 	}
 	return ret;
 }
@@ -1155,15 +1152,15 @@ static int cache_clear(lua_State *L)
 	}
 
 	/* Check parameters */
-	const char *args = NULL;
+	const char *prefix = NULL;
 	int n = lua_gettop(L);
 	if (n >= 1 && lua_isstring(L, 1)) {
-		args = lua_tostring(L, 1);
+		prefix = lua_tostring(L, 1);
 	}
 
 	/* Clear a sub-tree in cache. */
-	if (args && strlen(args) > 0) {
-		int ret = cache_remove_prefix(cache, args);
+	if (prefix && strlen(prefix) > 0) {
+		int ret = cache_remove_prefix(cache, prefix);
 		if (ret < 0) {
 			format_error(L, kr_strerror(ret));
 			lua_error(L);
@@ -1188,13 +1185,13 @@ static int cache_clear(lua_State *L)
 }
 
 /** @internal Dump cache key into table on Lua stack. */
-static void cache_dump_key(lua_State *L, knot_db_val_t key)
+static void cache_dump(lua_State *L, knot_db_val_t keyval[])
 {
 	knot_dname_t dname[KNOT_DNAME_MAXLEN];
 	char name[KNOT_DNAME_TXT_MAXLEN];
 	uint16_t type;
 
-	int ret = kr_unpack_cache_key(key, dname, &type);
+	int ret = kr_unpack_cache_key(keyval[0], dname, &type);
 	if (ret < 0) {
 		return;
 	}
@@ -1235,9 +1232,9 @@ static int cache_get(lua_State *L)
 	}
 
 	/* Retrieve set of keys */
-	const char *args = lua_tostring(L, 1);
-	knot_db_val_t result_set[100];
-	int ret = cache_prefixed(cache, args, result_set, 100);
+	const char *prefix = lua_tostring(L, 1);
+	knot_db_val_t keyval[100][2];
+	int ret = cache_prefixed(cache, prefix, keyval, 100);
 	if (ret < 0) {
 		format_error(L, kr_strerror(ret));
 		lua_error(L);
@@ -1245,7 +1242,7 @@ static int cache_get(lua_State *L)
 	/* Format output */
 	lua_newtable(L);
 	for (int i = 0; i < ret; ++i) {
-		cache_dump_key(L, result_set[i]);
+		cache_dump(L, keyval[i]);
 	}
 	return 1;
 }

@@ -160,7 +160,7 @@ int kr_cache_remove(struct kr_cache *cache, const knot_dname_t *name, uint16_t t
  */
 KR_EXPORT
 int kr_cache_match(struct kr_cache *cache, const knot_dname_t *name,
-		   knot_db_val_t *keys, int max);
+		   knot_db_val_t keyval[][2], int maxcount);
 
 /**
  * Unpack dname and type from db key

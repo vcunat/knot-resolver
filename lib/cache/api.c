@@ -765,7 +765,7 @@ int kr_cache_remove(struct kr_cache *cache, const knot_dname_t *name, uint16_t t
 }
 
 int kr_cache_match(struct kr_cache *cache, const knot_dname_t *name,
-		   knot_db_val_t *keys, int max)
+		   knot_db_val_t keyval[][2], int maxcount)
 {
 	if (!cache_isvalid(cache)) {
 		return kr_error(EINVAL);
@@ -783,7 +783,7 @@ int kr_cache_match(struct kr_cache *cache, const knot_dname_t *name,
 	knot_db_val_t key = key_exact_type(k, KNOT_RRTYPE_A);
 	key.len -= 2 /* '\0' 'E' */ + sizeof(uint16_t); /* CACHE_KEY_DEF */
 	if (name[0] == '\0') ++key.len; /* the root name is special ATM */
-	return cache_op(cache, match, &key, keys, max);
+	return cache_op(cache, match, &key, keyval, maxcount);
 }
 
 int kr_unpack_cache_key(knot_db_val_t key, knot_dname_t *buf, uint16_t *type)
