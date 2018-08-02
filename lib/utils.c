@@ -1014,6 +1014,7 @@ finish:
 void kr_rrset_init(knot_rrset_t *rrset, knot_dname_t *owner,
 			uint16_t type, uint16_t rclass, uint32_t ttl)
 {
+	assert(rrset);
 	knot_rrset_init(rrset, owner, type, rclass, ttl);
 }
 uint16_t kr_pkt_qclass(const knot_pkt_t *pkt)
@@ -1031,4 +1032,8 @@ uint32_t kr_rrsig_sig_inception(const knot_rdata_t *rdata)
 uint32_t kr_rrsig_sig_expiration(const knot_rdata_t *rdata)
 {
 	return knot_rrsig_sig_expiration(rdata);
+}
+uint16_t kr_rrsig_type_covered(const knot_rdata_t *rdata)
+{
+	return knot_rrsig_type_covered(rdata);
 }

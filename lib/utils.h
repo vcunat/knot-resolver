@@ -184,15 +184,6 @@ typedef array_t(ranked_rr_array_entry_t *) ranked_rr_array_t;
 
 /** @internal RDATA array maximum size. */
 #define RDATA_ARR_MAX (UINT16_MAX + sizeof(uint64_t))
-/** @internal Next RDATA shortcut. */
-#define kr_rdataset_next knot_rdata_next
-
-/** Advance to the next rdata in a rdataset.  Useful for iteration. */
-static inline knot_rdata_t * knot_rdata_next(knot_rdata_t *rd)
-{
-	assert(rd);
-	return (knot_rdata_t *)( (uint8_t *)rd + knot_rdata_size(rd->len) );
-}
 
 /** Concatenate N strings. */
 KR_EXPORT
@@ -433,8 +424,8 @@ static inline int kr_dname_lf(uint8_t *dst, const knot_dname_t *src, bool add_wi
 		return kr_error(EINVAL);
 	}
 	int len = right_aligned_dname_start[0];
-	if (len == 1)
-		len = 0;
+	assert(right_aligned_dname_start + 1 + len - KNOT_DNAME_MAXLEN == right_aligned_dst);
+	memcpy(dst + 1, right_aligned_dname_start + 1, len);
 	if (add_wildcard) {
 		if (len + 2 > KNOT_DNAME_MAXLEN)
 			return kr_error(ENOSPC);
@@ -443,7 +434,6 @@ static inline int kr_dname_lf(uint8_t *dst, const knot_dname_t *src, bool add_wi
 		len += 2;
 	}
 	dst[0] = len;
-	memcpy(dst + 1, right_aligned_dname_start, len);
 	return KNOT_EOK;
 };
 
@@ -454,3 +444,4 @@ KR_EXPORT uint16_t kr_pkt_qclass(const knot_pkt_t *pkt);
 KR_EXPORT uint16_t kr_pkt_qtype(const knot_pkt_t *pkt);
 KR_EXPORT uint32_t kr_rrsig_sig_inception(const knot_rdata_t *rdata);
 KR_EXPORT uint32_t kr_rrsig_sig_expiration(const knot_rdata_t *rdata);
+KR_EXPORT uint16_t kr_rrsig_type_covered(const knot_rdata_t *rdata);

@@ -170,7 +170,8 @@ int kr_zonecut_add(struct kr_zonecut *cut, const knot_dname_t *ns, const knot_rd
 		assert(!EINVAL);
 		return kr_error(EINVAL);
 	}
-	if (rdata && rdata->len != sizeof(struct in_addr)
+	/* Disabled; add_reverse_pair() misuses this for domain name in rdata. */
+	if (false && rdata && rdata->len != sizeof(struct in_addr)
 		  && rdata->len != sizeof(struct in6_addr)) {
 		assert(!EINVAL);
 		return kr_error(EINVAL);
@@ -309,7 +310,7 @@ static void fetch_addr(struct kr_zonecut *cut, struct kr_cache *cache,
 	knot_rdata_t *rd = cached_rr.rrs.rdata;
 	for (uint16_t i = 0; i < cached_rr.rrs.count; ++i) {
 		(void) kr_zonecut_add(cut, ns, rd);
-		rd = kr_rdataset_next(rd);
+		rd = knot_rdataset_next(rd);
 	}
 }
 

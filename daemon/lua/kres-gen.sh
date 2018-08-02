@@ -104,8 +104,8 @@ printf "\tchar _stub[];\n};\n"
 # Domain names
 	knot_dname_copy
 	knot_dname_from_str
+	knot_dname_in_bailiwick
 	knot_dname_is_equal
-	knot_dname_is_sub
 	knot_dname_labels
 	knot_dname_size
 	knot_dname_to_str
@@ -148,6 +148,7 @@ EOF
 	kr_pkt_qtype
 	kr_rrsig_sig_inception
 	kr_rrsig_sig_expiration
+	kr_rrsig_type_covered
 	kr_inaddr
 	kr_inaddr_family
 	kr_inaddr_len
@@ -182,6 +183,25 @@ EOF
 # Cache
 	kr_cache_insert_rr
 	kr_cache_sync
+EOF
+
+
+## libzscanner API for ./zonefile.lua
+./scripts/gen-cdefs.sh libzscanner types <<-EOF
+	zs_win_t
+	zs_apl_t
+	zs_loc_t
+	zs_state_t
+	zs_scanner_t
+	struct zs_scanner
+EOF
+./scripts/gen-cdefs.sh libzscanner functions <<-EOF
+	zs_deinit
+	zs_init
+	zs_parse_record
+	zs_set_input_file
+	zs_set_input_string
+	zs_strerror
 EOF
 
 printf "]]\n"

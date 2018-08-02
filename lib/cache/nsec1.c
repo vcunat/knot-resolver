@@ -209,12 +209,12 @@ static const char * find_leq_NSEC1(struct kr_cache *cache, const struct kr_query
 	/* We know it starts before sname, so let's check the other end.
 	 * 1. construct the key for the next name - kwz_hi. */
 	/* it's *full* name ATM */
-	const knot_dname_t *next = eh->data + KR_CACHE_RR_COUNT_SIZE
-				 + 2 /* RDLENGTH from rfc1034 */;
+	const knot_rdata_t *next = (const knot_rdata_t *)
+				(eh->data + KR_CACHE_RR_COUNT_SIZE);
 	if (KR_CACHE_RR_COUNT_SIZE != 2 || get_uint16(eh->data) == 0) {
 		assert(false);
 		return "ERROR";
-		/* TODO: more checks?  Also, `next` computation is kinda messy. */
+		/* TODO: more checks? */
 	}
 	/*
 	WITH_VERBOSE {
@@ -228,8 +228,18 @@ static const char * find_leq_NSEC1(struct kr_cache *cache, const struct kr_query
 		assert(false);
 		return "EINVAL";
 	}
-	ret = kr_dname_lf(chs, next, false);
-	/* FIXME: lower-case chs; see also RFC 6840 5.1. */
+	{
+		/* Lower-case chs; see also RFC 6840 5.1.
+		 * LATER(optim.): we do lots of copying etc. */
+		knot_dname_t lower_buf[KNOT_DNAME_MAXLEN];
+		ret = knot_dname_to_wire(lower_buf, next->data,
+					 MIN(next->len, KNOT_DNAME_MAXLEN));
+		if (ret < 0) { /* _ESPACE */
+			return "range search found record with incorrect contents";
+		}
+		knot_dname_to_lower(lower_buf);
+		ret = kr_dname_lf(chs, lower_buf, false);
+	}
 	if (ret) {
 		assert(false);
 		return "ERROR";

@@ -207,7 +207,8 @@ static int validate_keyset(struct kr_request *req, knot_pkt_t *answer, bool has_
 	const knot_pktsection_t *an = knot_pkt_section(answer, KNOT_ANSWER);
 	for (unsigned i = 0; i < an->count; ++i) {
 		const knot_rrset_t *rr = knot_pkt_rr(an, i);
-		if ((rr->type != KNOT_RRTYPE_DNSKEY) || !knot_dname_in(qry->zone_cut.name, rr->owner)) {
+		if (rr->type != KNOT_RRTYPE_DNSKEY
+		    || knot_dname_in_bailiwick(rr->owner, qry->zone_cut.name) < 0) {
 			continue;
 		}
 		/* Merge with zone cut (or replace ancestor key). */
@@ -493,7 +494,7 @@ static int rrsig_not_found(kr_layer_t *ctx, const knot_rrset_t *rr)
 	struct kr_zonecut *cut = &qry->zone_cut;
 	const knot_dname_t *cut_name_start = qry->zone_cut.name;
 	bool use_cut = true;
-	if (!knot_dname_in(cut_name_start, rr->owner)) {
+	if (knot_dname_in_bailiwick(rr->owner, cut_name_start) < 0) {
 		int zone_labels = knot_dname_labels(qry->zone_cut.name, NULL);
 		int matched_labels = knot_dname_matched_labels(qry->zone_cut.name, rr->owner);
 		int skip_labels = zone_labels - matched_labels;
@@ -568,7 +569,7 @@ static int check_validation_result(kr_layer_t *ctx, ranked_rr_array_t *arr)
 	const knot_rrset_t *rr = invalid_entry->rr;
 	if (kr_rank_test(invalid_entry->rank, KR_RANK_MISMATCH)) {
 		const knot_dname_t *signer_name = knot_rrsig_signer_name(rr->rrs.rdata);
-		if (knot_dname_is_sub(signer_name, qry->zone_cut.name)) {
+		if (knot_dname_in_bailiwick(signer_name, qry->zone_cut.name) > 0) {
 			qry->zone_cut.name = knot_dname_copy(signer_name, &req->pool);
 			qry->flags.AWAIT_CUT = true;
 		} else if (!knot_dname_is_equal(signer_name, qry->zone_cut.name)) {
@@ -710,13 +711,13 @@ static int check_signer(kr_layer_t *ctx, knot_pkt_t *pkt)
 			const uint16_t qtype = knot_pkt_qtype(pkt);
 			const knot_dname_t *qname = knot_pkt_qname(pkt);
 			if (qtype == KNOT_RRTYPE_NS &&
-			    knot_dname_is_sub(qname, qry->zone_cut.name)) {
+			    knot_dname_in_bailiwick(qname, qry->zone_cut.name) > 0) {
 				/* Server is authoritative
 				 * for both parent and child,
 				 * and child zone is not signed. */
 				qry->zone_cut.name = knot_dname_copy(qname, &req->pool);
 			}
-		} else if (knot_dname_is_sub(signer, qry->zone_cut.name)) {
+		} else if (knot_dname_in_bailiwick(signer, qry->zone_cut.name) > 0) {
 			if (!(qry->flags.FORWARD)) {
 				/* Key signer is below current cut, advance and refetch keys. */
 				qry->zone_cut.name = knot_dname_copy(signer, &req->pool);
