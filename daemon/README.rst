@@ -670,7 +670,7 @@ The default cache in Knot DNS Resolver is persistent with LMDB backend, this mea
 the cached data on restart or crash to avoid cold-starts. The cache may be reused between cache
 daemons or manipulated from other processes, making for example synchronised load-balanced recursors possible.
 
-.. envvar:: cache.size (number)
+.. envvar:: cache.size
 
    Set the cache maximum size in bytes. Note that this is only a hint to the backend,
    which may or may not respect it. See :func:`cache.open()`.
@@ -679,7 +679,7 @@ daemons or manipulated from other processes, making for example synchronised loa
 
 	cache.size = 100 * MB -- equivalent to `cache.open(100 * MB)`
 
-.. envvar:: cache.current_size (number)
+.. envvar:: cache.current_size
 
    Get the maximum size in bytes.
 
@@ -687,22 +687,22 @@ daemons or manipulated from other processes, making for example synchronised loa
 
 	print(cache.current_size)
 
-.. envvar:: cache.storage (string)
+.. envvar:: cache.storage
 
-   Set the cache storage backend configuration, see :func:`cache.backends()` for
+   The cache storage backend configuration, see :func:`cache.backends()` for
    more information. If the new storage configuration is invalid, it is not set.
 
    .. code-block:: lua
 
 	cache.storage = 'lmdb://.'
 
-.. envvar:: cache.current_storage (string)
+.. envvar:: cache.current_storage
 
    Get the storage backend configuration.
 
    .. code-block:: lua
 
-	print(cache.storage)
+	print(cache.current_storage)
 
 .. function:: cache.backends()
 
@@ -716,14 +716,20 @@ daemons or manipulated from other processes, making for example synchronised loa
 
    .. code-block:: lua
 
-   	[lmdb://] => true
+	[lmdb] => true
 
 .. function:: cache.stats()
 
-   :return: table of cache counters
+   :return: table of cache statistics
 
-  The cache collects counters on various operations (hits, misses, transactions, ...). This function call returns a table of
-  cache counters that can be used for calculating statistics.
+   The cache collects counters on various operations (hits, misses, transactions, ...). This function call returns a table of
+   cache counters that can be used for calculating statistics.
+   Note that this tracks all operations over cache, not just which
+   queries were answered from cache or not.
+
+   .. code-block:: lua
+
+	print('Insertions:', cache.stats().insert)
 
 .. function:: cache.open(max_size[, config_uri])
 
@@ -753,17 +759,6 @@ daemons or manipulated from other processes, making for example synchronised loa
    Close the cache.
 
    .. note:: This may or may not clear the cache, depending on the used backend. See :func:`cache.clear()`.
-
-.. function:: cache.stats()
-
-   Return table of statistics, note that this tracks all operations over cache, not just which
-   queries were answered from cache or not.
-
-   Example:
-
-   .. code-block:: lua
-
-	print('Insertions:', cache.stats().insert)
 
 .. function:: cache.max_ttl([ttl])
 
