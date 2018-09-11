@@ -500,6 +500,7 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 	bool is_final = (query->parent == NULL);
 	uint32_t iter_count = 0;
 	bool strict_mode = (query->flags.STRICT);
+	bool has_dname = false;
 	do {
 		/* CNAME was found at previous iteration, but records may not follow the correct order.
 		 * Try to find records for pending_cname owner from section start. */
@@ -509,13 +510,19 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 		for (unsigned i = 0; i < an->count; ++i) {
 			const knot_rrset_t *rr = knot_pkt_rr(an, i);
 
-			/* Skip the RR if its owner+type doesn't interest us. */
+			/* Skip the records that don't have an interesting type:
+			 * - Type or RRSIG covering the type matching the requested query type
+			 * - CNAME or DNAME or RRSIG of either
+			 */
 			const uint16_t type = kr_rrset_type_maysig(rr);
-			const bool type_OK = rr->type == query->stype || type == query->stype
-				|| type == KNOT_RRTYPE_CNAME || type == KNOT_RRTYPE_DNAME;
-				/* TODO: actually handle DNAMEs */
+			const bool type_OK = rr->type == query->stype
+				|| type == query->stype
+				|| (type == KNOT_RRTYPE_CNAME && !has_dname)
+				|| type == KNOT_RRTYPE_DNAME;
+
+			/* DNAME doesn't have to be requal to †arget name, it can be source of synthesis */
 			if (rr->rclass != KNOT_CLASS_IN || !type_OK
-			    || !knot_dname_is_equal(rr->owner, cname)
+			    || (type != KNOT_RRTYPE_DNAME && !knot_dname_is_equal(rr->owner, cname))
 			    || knot_dname_in_bailiwick(rr->owner, query->zone_cut.name) < 0) {
 				continue;
 			}
@@ -560,15 +567,34 @@ static int unroll_cname(knot_pkt_t *pkt, struct kr_request *req, bool referral, 
 			if (state != kr_ok()) {
 				return KR_STATE_FAIL;
 			}
+
+			/* Jump to next DNAME target */
+			if (rr->type == KNOT_RRTYPE_DNAME) {
+				/* Don't use the synthetic CNAME or other records */
+				has_dname = true;
+				/* Expand DNAME if not asked for DNAME explicitly */
+				if (query->stype != KNOT_RRTYPE_DNAME) {
+					cname_chain_len += 1;
+					const knot_dname_t *substitution = knot_cname_name(rr->rrs.rdata);
+					size_t labels = knot_dname_labels(rr->owner, NULL);
+					pending_cname = knot_dname_replace_suffix(query->sname, labels, substitution, &req->pool);
+					if (!pending_cname) {
+						break;
+					}
+					WITH_VERBOSE(query) {
+						auto_free char *dname_str = kr_dname_text(pending_cname);
+						VERBOSE_MSG("<= expanding DNAME: %s\n", dname_str);
+					}
+				}
 			/* Jump to next CNAME target */
-			if ((query->stype == KNOT_RRTYPE_CNAME) || (rr->type != KNOT_RRTYPE_CNAME)) {
-				continue;
+			} else if ((query->stype != KNOT_RRTYPE_CNAME) && (rr->type == KNOT_RRTYPE_CNAME)) {
+				cname_chain_len += 1;
+				pending_cname = knot_cname_name(rr->rrs.rdata);
+				if (!pending_cname) {
+					break;
+				}
 			}
-			cname_chain_len += 1;
-			pending_cname = knot_cname_name(rr->rrs.rdata);
-			if (!pending_cname) {
-				break;
-			}
+
 			if (cname_chain_len > an->count || cname_chain_len > KR_CNAME_CHAIN_LIMIT) {
 				VERBOSE_MSG("<= too long cname chain\n");
 				return KR_STATE_FAIL;
@@ -690,7 +716,7 @@ static int process_cname_chain(knot_pkt_t *pkt, struct kr_request *req, struct k
 			VERBOSE_MSG("<= processing final response failed\n");
 			return state;
 		}
-	} else if ((query->flags.FORWARD) &&
+	} else if ((query->flags.FORWARD || query->parent) &&
 		   ((query->stype == KNOT_RRTYPE_DS) ||
 		    (query->stype == KNOT_RRTYPE_NS))) {
 		/* CNAME'ed answer for DS or NS subquery.
