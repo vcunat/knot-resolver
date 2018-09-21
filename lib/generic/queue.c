@@ -1,0 +1,97 @@
+#include "lib/generic/queue.h"
+#include <string.h>
+
+void queue_init_impl(struct queue *q, size_t item_size)
+{
+	q->len = 0;
+	q->item_size = item_size;
+	q->head = q->tail = NULL;
+	/* Take 128 B (two x86 cache lines), except a small margin
+	 * that the allocator can use for its overhead.
+	 * Normally (64-bit pointers) this means 16 B header + 13*8 B data. */
+	q->chunk_cap = ( ((ssize_t)128) - offsetof(struct queue_chunk, data)
+			- sizeof(size_t)
+			) / item_size;
+	if (!q->chunk_cap) q->chunk_cap = 1; /* item_size big enough by itself */
+}
+
+void queue_deinit_impl(struct queue *q)
+{
+	assert(q);
+	for (struct queue_chunk *p = q->head; p != NULL; p = p->next)
+		free(p);
+#ifndef NDEBUG
+	memset(q, 0, sizeof(*q));
+#endif
+}
+
+static struct queue_chunk * queue_chunk_new(const struct queue *q)
+{
+	struct queue_chunk *c = malloc(offsetof(struct queue_chunk, data)
+					+ q->chunk_cap * q->item_size);
+	if (unlikely(!c)) abort(); // simplify stuff
+	memset(c, 0, offsetof(struct queue_chunk, data));
+	c->cap = q->chunk_cap;
+	return c;
+}
+
+void * queue_push_impl(struct queue *q)
+{
+	assert(q);
+	struct queue_chunk *t = q->tail; // shorthand
+	if (unlikely(!t)) {
+		assert(!q->head && !q->len);
+		q->head = q->tail = t = queue_chunk_new(q);
+	} else
+	if (t->end == t->cap) {
+		if (t->begin * 2 >= t->cap) {
+			/* Utilization is below 50%, so let's shift (no overlap). */
+			memcpy(t->data, t->data + t->begin * q->item_size,
+				(t->end - t->begin) * q->item_size);
+			t->end -= t->begin;
+			t->begin = 0;
+		} else {
+			/* Let's grow the tail by another chunk. */
+			assert(!t->next);
+			t->next = queue_chunk_new(q);
+			t = q->tail = t->next;
+		}
+	}
+	assert(t->end < t->cap);
+	++(q->len);
+	++(t->end);
+	return t->data + q->item_size * (t->end - 1);
+}
+
+void * queue_push_head_impl(struct queue *q)
+{
+	assert(q);
+	struct queue_chunk *h = q->head; // shorthand
+	if (unlikely(!h)) {
+		assert(!q->tail && !q->len);
+		h = q->head = q->tail = queue_chunk_new(q);
+		h->begin = h->end = h->cap;
+	} else
+	if (h->begin == 0) {
+		if (h->end * 2 >= h->cap) {
+			/* Utilization is below 50%, so let's shift (no overlap).
+			 * Computations here are simplified due to h->begin == 0. */
+			const int cnt = h->end;
+			memcpy(h->data + (h->cap - cnt) * q->item_size, h->data,
+				cnt * q->item_size);
+			h->begin = h->cap - cnt;
+			h->end = h->cap;
+		} else {
+			/* Let's grow the head by another chunk. */
+			h = queue_chunk_new(q);
+			h->next = q->head;
+			q->head = h;
+			h->begin = h->end = h->cap;
+		}
+	}
+	assert(h->begin > 0);
+	--(h->begin);
+	++(q->len);
+	return h->data + q->item_size * h->begin;
+}
+
