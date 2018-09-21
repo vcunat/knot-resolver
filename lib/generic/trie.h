@@ -96,6 +96,16 @@ int trie_apply(trie_t *tbl, int (*f)(trie_val_t *, void *), void *d);
 KR_EXPORT
 int trie_del(trie_t *tbl, const char *key, uint32_t len, trie_val_t *val);
 
+/*!
+ * \brief Remove the first item, returning KNOT_EOK on success.
+ *
+ * You may optionally get the key and/or value.
+ * The key is copied, so you need to pass sufficient len,
+ * otherwise kr_error(ENOSPC) is returned.
+ */
+KR_EXPORT
+int trie_del_first(trie_t *tbl, char *key, uint32_t *len, trie_val_t *val);
+
 /*! \brief Create a new iterator pointing to the first element (if any). */
 KR_EXPORT
 trie_it_t* trie_it_begin(trie_t *tbl);
