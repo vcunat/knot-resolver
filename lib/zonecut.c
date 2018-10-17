@@ -29,6 +29,23 @@
 
 #define VERBOSE_MSG(qry, fmt...) QRVERBOSE(qry, "zcut", fmt)
 
+/** If an ancestor query has its zone cut in the state that
+ * it's looking for address(es) of some NS(s),
+ * we want to avoid doing so with a NS that lies under that cut.
+ * Instead we need to consider such names unusable in the cut (for now). */
+
+/** Information for one NS name + address type. */
+struct addr_info {
+	/* Possibilities:
+	 * - at least one usable address (we might be interested whether it's only glue)
+	 * - no usable address (but we have the RRset)
+	 * - error when fetching RRset (NODATA, NXDOMAIN, SERVFAIL)
+	 *   This is approximated by cache_rep ATM.
+	 * - not interested in this address family
+	 * - status of RRset unknown - the name might be usable or not
+	 */
+};
+
 /* Root hint descriptor. */
 struct hint_info {
 	const knot_dname_t *name;
