@@ -34,6 +34,7 @@ struct kr_zonecut {
 	struct kr_zonecut *parent; /**< Parent zone cut. */
 	trie_t *nsset;        /**< Map of nameserver => address_set (pack_t). */
 	knot_mm_t *pool;     /**< Memory pool. */
+	bool with_infos;
 };
 
 /**
@@ -52,6 +53,14 @@ int kr_zonecut_init(struct kr_zonecut *cut, const knot_dname_t *name, knot_mm_t 
  */
 KR_EXPORT
 void kr_zonecut_deinit(struct kr_zonecut *cut);
+
+/**
+ * Move a zonecut, transferring ownership of any pointed-to memory.
+ * @param to the target - it gets deinit-ed
+ * @param from the source - not modified, but shouldn't be used afterward
+ */
+KR_EXPORT
+void kr_zonecut_move(struct kr_zonecut *to, const struct kr_zonecut *from);
 
 /**
  * Reset zone cut to given name and clear address list.

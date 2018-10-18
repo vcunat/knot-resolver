@@ -14,18 +14,18 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <libknot/descriptor.h>
-#include <libknot/rrtype/rdname.h>
-#include <libknot/packet/wire.h>
-#include <libknot/descriptor.h>
-
 #include "lib/zonecut.h"
-#include "lib/rplan.h"
+
 #include "contrib/cleanup.h"
 #include "lib/defines.h"
+#include "lib/generic/pack.h"
 #include "lib/layer.h"
 #include "lib/resolve.h"
-#include "lib/generic/pack.h"
+#include "lib/rplan.h"
+
+#include <libknot/descriptor.h>
+#include <libknot/packet/wire.h>
+#include <libknot/rrtype/rdname.h>
 
 #define VERBOSE_MSG(qry, fmt...) QRVERBOSE(qry, "zcut", fmt)
 
@@ -35,7 +35,7 @@
  * Instead we need to consider such names unusable in the cut (for now). */
 
 /** Information for one NS name + address type. */
-struct addr_info {
+struct addrset_info {
 	/* Possibilities:
 	 * - at least one usable address (we might be interested whether it's only glue)
 	 * - no usable address (but we have the RRset)
@@ -46,14 +46,13 @@ struct addr_info {
 	 */
 };
 
-/* Root hint descriptor. */
-struct hint_info {
-	const knot_dname_t *name;
-	size_t len;
-	const uint8_t *addr;
+struct addr_info {
+	uint16_t score;
+	uint8_t rdata[]; /* additional 4 or 16 bytes */
 };
 
-#define U8(x) (const uint8_t *)(x)
+
+
 
 static void update_cut_name(struct kr_zonecut *cut, const knot_dname_t *name)
 {
@@ -71,11 +70,9 @@ int kr_zonecut_init(struct kr_zonecut *cut, const knot_dname_t *name, knot_mm_t 
 		return kr_error(EINVAL);
 	}
 
+	memset(cut, 0, sizeof(*cut));
 	cut->name = knot_dname_copy(name, pool);
 	cut->pool = pool;
-	cut->key  = NULL;
-	cut->trust_anchor = NULL;
-	cut->parent = NULL;
 	cut->nsset = trie_create(pool);
 	return cut->name && cut->nsset ? kr_ok() : kr_error(ENOMEM);
 }
@@ -110,6 +107,13 @@ void kr_zonecut_deinit(struct kr_zonecut *cut)
 	}
 	knot_rrset_free(cut->key, cut->pool);
 	knot_rrset_free(cut->trust_anchor, cut->pool);
+}
+
+void kr_zonecut_move(struct kr_zonecut *to, const struct kr_zonecut *from)
+{
+	if (!to || !from) abort();
+	kr_zonecut_deinit(to);
+	memcpy(to, from, sizeof(*to));
 }
 
 void kr_zonecut_set(struct kr_zonecut *cut, const knot_dname_t *name)
@@ -298,7 +302,8 @@ int kr_zonecut_set_sbelt(struct kr_context *ctx, struct kr_zonecut *cut)
 	trie_apply(cut->nsset, free_addr_set_cb, cut->pool);
 	trie_clear(cut->nsset);
 
-	update_cut_name(cut, U8(""));
+	const uint8_t *const dname_root = (const uint8_t *)/*sign-cast*/("");
+	update_cut_name(cut, dname_root);
 	/* Copy root hints from resolution context. */
 	return kr_zonecut_copy(cut, &ctx->root_hints);
 }
@@ -433,8 +438,8 @@ int kr_zonecut_find_cached(struct kr_context *ctx, struct kr_zonecut *cut,
 			   const knot_dname_t *name, const struct kr_query *qry,
 			   bool * restrict secured)
 {
-	//VERBOSE_MSG(qry, "_find_cached\n");
-	if (!ctx || !cut || !name) {
+	if (!ctx || !cut || !name || !cut->with_infos) {
+		assert(false);
 		return kr_error(EINVAL);
 	}
 	/* Copy name as it may overlap with cut name that is to be replaced. */
