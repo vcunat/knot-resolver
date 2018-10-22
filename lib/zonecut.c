@@ -29,21 +29,17 @@
 
 #define VERBOSE_MSG(qry, fmt...) QRVERBOSE(qry, "zcut", fmt)
 
-/** If an ancestor query has its zone cut in the state that
- * it's looking for address(es) of some NS(s),
- * we want to avoid doing so with a NS that lies under that cut.
- * Instead we need to consider such names unusable in the cut (for now). */
-
 /** Information for one NS name + address type. */
-struct addrset_info {
-	/* Possibilities:
-	 * - at least one usable address (we might be interested whether it's only glue)
-	 * - no usable address (but we have the RRset)
-	 * - error when fetching RRset (NODATA, NXDOMAIN, SERVFAIL)
-	 *   This is approximated by cache_rep ATM.
-	 * - not interested in this address family
-	 * - status of RRset unknown - the name might be usable or not
-	 */
+typedef uint8_t addrset_info_t;
+enum {
+	AI_UNINITED = 0,
+	AI_UNKNOWN,	/**< Don't know status of this RRset; various reasons. */
+	AI_REPUT,	/**< Don't use this addrset, due to: cache_rep, NO_IPV6, ...
+			 * cache_rep approximates various problems when fetching the RRset. */
+	AI_CYCLED,	/**< Skipped due to cycle detection; see implementation for details. */
+	AI_EMPTY,	/**< No usable address (may mean e.g. just NODATA). */
+	AI_OK,		/**< At least one usable address.
+			 * LATER: we might be interested whether it's only glue. */
 };
 
 struct addr_info {
@@ -277,6 +273,10 @@ pack_t *kr_zonecut_find(struct kr_zonecut *cut, const knot_dname_t *ns)
 	return val ? (pack_t *)*val : NULL;
 }
 
+
+
+
+
 static int has_address(trie_val_t *v, void *baton_)
 {
 	const pack_t *pack = *v;
@@ -309,31 +309,64 @@ int kr_zonecut_set_sbelt(struct kr_context *ctx, struct kr_zonecut *cut)
 }
 
 /** Fetch address for zone cut.  Any rank is accepted (i.e. glue as well). */
-static void fetch_addr(struct kr_zonecut *cut, struct kr_cache *cache,
-			const knot_dname_t *ns, uint16_t rrtype,
-			const struct kr_query *qry)
+static addrset_info_t fetch_addr(pack_t *addrs, const knot_dname_t *ns, uint16_t rrtype,
+				 knot_mm_t *mm_pool, const struct kr_query *qry)
 // LATER(optim.): excessive data copying
+// TODO: this function might better fit in nsrep.c
 {
+	struct kr_context *ctx = qry->request->ctx;
 	struct kr_cache_p peek;
-	if (kr_cache_peek_exact(cache, ns, rrtype, &peek) != 0) {
-		return;
+	if (kr_cache_peek_exact(&ctx->cache, ns, rrtype, &peek) != 0) {
+		return AI_UNKNOWN;
 	}
 	int32_t new_ttl = kr_cache_ttl(&peek, qry, ns, rrtype);
 	if (new_ttl < 0) {
-		return;
+		return AI_UNKNOWN;
 	}
 
 	knot_rrset_t cached_rr;
 	knot_rrset_init(&cached_rr, /*const-cast*/(knot_dname_t *)ns, rrtype,
 			KNOT_CLASS_IN, new_ttl);
-	if (kr_cache_materialize(&cached_rr.rrs, &peek, cut->pool) < 0) {
-		return;
+	if (kr_cache_materialize(&cached_rr.rrs, &peek, mm_pool) < 0) {
+		return AI_UNKNOWN;
 	}
+
+	const size_t pack_extra_size =
+		cached_rr.rrs.count * offsetof(struct addr_info, rdata)
+		+ knot_rdataset_size(&cached_rr.rrs);
+	int ret = pack_reserve_mm(*addrs, cached_rr.rrs.count, pack_extra_size,
+				  kr_memreserve, mm_pool);
+	if (!ret) abort(); /* ENOMEM "probably" */
+
+	addrset_info_t result = AI_EMPTY;
 	knot_rdata_t *rd = cached_rr.rrs.rdata;
-	for (uint16_t i = 0; i < cached_rr.rrs.count; ++i) {
-		(void) kr_zonecut_add(cut, ns, rd);
-		rd = knot_rdataset_next(rd);
+	for (uint16_t i = 0; i < cached_rr.rrs.count; ++i, rd = knot_rdataset_next(rd)) {
+		const size_t rds = knot_rdata_size(rd->len);
+		if (unlikely(rds != 2+4 || (rrtype == KNOT_RRTYPE_AAAA && rds != 2+16))) {
+			VERBOSE_MSG(qry, "bad NS address length %d, skipping\n", (int)rds);
+			continue;
+		}
+
+		/* Check RTT cache - whether the IP is usable or not. */
+		kr_nsrep_rtt_lru_entry_t *rtt_e = ctx->cache_rtt
+			? lru_get_try(ctx->cache_rtt, (const char *)rd->data, rd->len)
+			: NULL;
+		if (rtt_e && rtt_e->score >= KR_NS_TIMEOUT) {
+			const uint64_t when_retry = rtt_e->tout_timestamp
+				+ ctx->cache_rtt_tout_retry_interval;
+			if (qry->creation_time_mono < when_retry) {
+				/* Address not to be used yet, so don't add it. */
+				continue;
+			}
+		}
+
+		struct addr_info *ai = (struct addr_info *)pack_obj_push_noinit(
+				addrs, offsetof(struct addr_info, rdata) + rds);
+		memcpy(ai->rdata, rd, rds);
+		ai->score = rtt_e ? rtt_e->score : KR_NS_UNKNOWN;
+		result = AI_OK;
 	}
+	return result;
 }
 
 /** Fetch best NS for zone cut. */
@@ -369,17 +402,54 @@ static int fetch_ns(struct kr_context *ctx, struct kr_zonecut *cut,
 	for (unsigned i = 0; i < ns_rds.count;
 			++i, rdata_i = knot_rdataset_next(rdata_i)) {
 		const knot_dname_t *ns_name = knot_ns_name(rdata_i);
-		(void) kr_zonecut_add(cut, ns_name, NULL);
+		const size_t ns_size = knot_dname_size(ns_name);
+
+		/* Push addrset_info[2] for the NS and get *infos pointer to it. */
+		pack_t **pack = (pack_t **)trie_get_ins(cut->nsset,
+					(const char *)ns_name, ns_size);
+		if (!pack) return kr_error(ENOMEM);
+		assert(!*pack); /* not critical, really */
+		*pack = mm_alloc(cut->pool, sizeof(pack_t));
+		if (!*pack) return kr_error(ENOMEM);
+		pack_init(**pack);
+		const size_t infos_size = 2 * sizeof(addrset_info_t);
+		int ret = pack_reserve_mm(**pack, 1, infos_size, kr_memreserve, cut->pool);
+		if (!ret) return kr_error(ENOMEM);
+		addrset_info_t *infos = (addrset_info_t *)
+					pack_obj_push_noinit(*pack, infos_size);
+
+		/* AI_CYCLED checks.
+		 * If an ancestor query has its zone cut in the state that
+		 * it's looking for name or address(es) of some NS(s),
+		 * we want to avoid doing so with a NS that lies under its cut.
+		 * Instead we need to consider such names unusable in the cut (for now). */
+		for (const struct kr_query *aq = qry; aq->parent; aq = aq->parent) {
+			const struct kr_qflags *aqpf = &aq->parent->flags;
+			if (   (aqpf->AWAIT_CUT  && aq->stype == KNOT_RRTYPE_NS)
+			    || (aqpf->AWAIT_IPV4 && aq->stype == KNOT_RRTYPE_A)
+			    || (aqpf->AWAIT_IPV6 && aq->stype == KNOT_RRTYPE_AAAA)) {
+				if (knot_dname_in_bailiwick(ns_name,
+							aq->parent->zone_cut.name)) {
+					infos[0] = infos[1] = AI_CYCLED;
+					break;
+				}
+			} else {
+				/* This ancestor waits for other reason that
+				 * NS name or address, so we're out of a direct cycle. */
+				break;
+			}
+		}
+
 		/* Fetch NS reputation and decide whether to prefetch A/AAAA records. */
 		unsigned *cached = lru_get_try(ctx->cache_rep,
-				(const char *)ns_name, knot_dname_size(ns_name));
+					(const char *)ns_name, ns_size);
 		unsigned reputation = (cached) ? *cached : 0;
-		if (!(reputation & KR_NS_NOIP4) && !(qry->flags.NO_IPV4)) {
-			fetch_addr(cut, &ctx->cache, ns_name, KNOT_RRTYPE_A, qry);
-		}
-		if (!(reputation & KR_NS_NOIP6) && !(qry->flags.NO_IPV6)) {
-			fetch_addr(cut,  &ctx->cache, ns_name, KNOT_RRTYPE_AAAA, qry);
-		}
+		infos[0] = (reputation & KR_NS_NOIP4) || qry->flags.NO_IPV4
+			? AI_REPUT
+			: fetch_addr(*pack, ns_name, KNOT_RRTYPE_A, cut->pool, qry);
+		infos[1] = (reputation & KR_NS_NOIP6) || qry->flags.NO_IPV6
+			? AI_REPUT
+			: fetch_addr(*pack, ns_name, KNOT_RRTYPE_AAAA, cut->pool, qry);
 	}
 
 	knot_rdataset_clear(&ns_rds, cut->pool);
@@ -447,7 +517,7 @@ int kr_zonecut_find_cached(struct kr_context *ctx, struct kr_zonecut *cut,
 	if (!qname) {
 		return kr_error(ENOMEM);
 	}
-	/* Start at QNAME parent. */
+	/* Start at QNAME. */
 	const knot_dname_t *label = qname;
 	while (true) {
 		/* Fetch NS first and see if it's insecure. */
