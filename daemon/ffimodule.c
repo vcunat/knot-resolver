@@ -250,32 +250,10 @@ static kr_layer_api_t *l_ffi_layer_create(lua_State *L, struct kr_module *module
 
 int ffimodule_register_lua(struct engine *engine, struct kr_module *module, const char *name)
 {
-	/* Register module in Lua */
-	lua_State *L = engine->L;
-	lua_getglobal(L, "require");
-	lua_pushfstring(L, "kres_modules.%s", name);
-	if (lua_pcall(L, 1, LUA_MULTRET, 0) != 0) {
-		fprintf(stderr, "error: %s\n", lua_tostring(L, -1));
-		lua_pop(L, 1);
-		return kr_error(ENOENT);
-	}
-	lua_setglobal(L, name);
-	lua_getglobal(L, name);
-
-	/* Create FFI module with trampolined functions. */
 	memset(module, 0, sizeof(*module));
 	module->name = strdup(name);
-	module->init = &l_ffi_init;
-	module->deinit = &l_ffi_deinit;
-	/* Bake layer API if defined in module */
-	lua_getfield(L, -1, "layer");
-	if (!lua_isnil(L, -1)) {
-		module->layer = l_ffi_layer_create(L, module);
-		/* most likely not needed, but compatibility for now */
-		module->data = (void *)module->layer;
-	}
+	lua_State *L = engine->L;
 	module->lib = L;
-	lua_pop(L, 2); /* Clear the layer + module global */
 	if (module->init) {
 		return module->init(module);
 	}
