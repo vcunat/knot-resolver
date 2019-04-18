@@ -111,8 +111,8 @@ configured in the config file.
    Listen on addresses; port and flags are optional.
    The addresses can be specified as a string or device,
    or a list of addresses (recursively).
-   The command can be given multiple times, but note that it silently skips
-   any addresses that have already been bound.
+   The command can be given multiple times,
+   but repeating an address-port combination is an error.
 
    If you specify port 853, ``kind = 'tls'`` by default.
 
